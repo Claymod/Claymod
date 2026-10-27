@@ -51,7 +51,7 @@ func TestPublicFromPrivateRejectsGarbage(t *testing.T) {
 
 func TestFakeBackendLifecycle(t *testing.T) {
 	backend := NewFakeBackend()
-	m, err := New("claymod0", backend, "127.0.0.1:51820")
+	m, err := New("claymod0", backend, "127.0.0.1:51821")
 	if err != nil {
 		t.Fatalf("New returned error: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestFakeBackendLifecycle(t *testing.T) {
 func TestNewWithKeysRestores(t *testing.T) {
 	backend := NewFakeBackend()
 	keys := KeyPair{Private: "cHJpdg==", Public: "cHVi"}
-	m := NewWithKeys("claymod0", keys, backend, "127.0.0.1:51820")
+	m := NewWithKeys("claymod0", keys, backend, "127.0.0.1:51821")
 	if m.ControlKeys.Public != "cHVi" {
 		t.Errorf("ControlKeys = %+v", m.ControlKeys)
 	}
