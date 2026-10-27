@@ -63,7 +63,7 @@ func newTestServer(t *testing.T) *testServer {
 	}
 	t.Cleanup(func() { inv.Close() })
 
-	wg, err := wgmgr.New("claymod0", wgmgr.NewFakeBackend(), "127.0.0.1:51820")
+	wg, err := wgmgr.New("claymod0", wgmgr.NewFakeBackend(), "127.0.0.1:51821")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func TestEnrollHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("enroll returned error: %v", err)
 	}
-	if resp.Hostname != "web01" || resp.WGIP != "10.42.0.1" {
+	if resp.Hostname != "web01" || resp.WGIP != "10.42.0.2" {
 		t.Errorf("response = %+v", resp)
 	}
 	if len(resp.ClientCert) == 0 || len(resp.ClientKey) == 0 || len(resp.CACert) == 0 {
@@ -127,6 +127,9 @@ func TestEnrollHappyPath(t *testing.T) {
 	}
 	if resp.WgServerPublicKey != s.WG.ControlKeys.Public {
 		t.Errorf("WgServerPublicKey = %q, want %q", resp.WgServerPublicKey, s.WG.ControlKeys.Public)
+	}
+	if resp.Overlay != "10.42.0.0/24" {
+		t.Errorf("Overlay = %q, want 10.42.0.0/24 (the aggregate for the agent's peer)", resp.Overlay)
 	}
 
 	// The issued certificate must verify for the hostname the runner
@@ -160,7 +163,7 @@ func TestEnrollHappyPath(t *testing.T) {
 	if len(peers) != 1 {
 		t.Fatalf("peers = %+v, want 1", peers)
 	}
-	if peers[0].AllowedIPs != "10.42.0.1/32" {
+	if peers[0].AllowedIPs != "10.42.0.2/32" {
 		t.Errorf("peer AllowedIPs = %q", peers[0].AllowedIPs)
 	}
 }

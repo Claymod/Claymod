@@ -58,6 +58,9 @@ type Response struct {
 	WgServerPublicKey string `json:"wg_server_public"`
 	// WgEndpoint is the control server's WireGuard listen address.
 	WgEndpoint string `json:"wg_endpoint"`
+	// Overlay is the agent network aggregate (e.g. 10.42.0.0/24) routed
+	// to the control server on the host's side of the tunnel.
+	Overlay string `json:"overlay"`
 }
 
 // Server is the HTTPS bootstrap endpoint. It requires TLS (run it behind
@@ -171,6 +174,7 @@ func (s *Server) Enroll(ctx context.Context, req Request) (*Response, error) {
 		ClientKey:         keyPEM,
 		WgServerPublicKey: s.WG.ControlKeys.Public,
 		WgEndpoint:        s.WG.ServerEndpoint,
+		Overlay:           s.Inv.Overlay(),
 	}, nil
 }
 
@@ -194,7 +198,13 @@ func (s *Server) Revoke(hostname string) error {
 	if err := s.WG.Revoke(host.PublicKey); err != nil {
 		return err
 	}
-	return s.Inv.RemoveHost(hostname)
+	if err := s.Inv.RemoveHost(hostname); err != nil {
+		return err
+	}
+	// The config file's peer list comes from the inventory: refresh it
+	// now that the host row is gone (WG.Revoke persisted too early — the
+	// row was still there at that point).
+	return s.WG.RefreshConf()
 }
 
 // EnrollClient enrolls this host against a bootstrap server over HTTPS.
