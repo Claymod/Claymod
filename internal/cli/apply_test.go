@@ -44,6 +44,9 @@ func startLoopbackAgent(t *testing.T, agentCN string) (port int, caFile, certFil
 		t.Fatal(err)
 	}
 	pool := authority.Pool()
+	// 127.0.0.2 is the first *host* address in a 127.0.0.0/8 overlay:
+	// 127.0.0.1 is reserved for the control server (IPAM, 2026-10-27).
+	// The agent binds where the inventory will say it is.
 	ln, err := proto.Listen("127.0.0.1:0", agentID, pool)
 	if err != nil {
 		t.Fatal(err)

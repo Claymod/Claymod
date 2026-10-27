@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -63,7 +64,7 @@ of the server certificate).`,
 	cmd.Flags().StringVar(&outDir, "out-dir", "/etc/claymod", "directory for the enrolled identity files")
 	cmd.Flags().StringVar(&listen, "listen", "0.0.0.0:2323", "agent listen address written to agent.yaml")
 	cmd.Flags().BoolVar(&skipWG, "skip-wg-config", false, "write identity files only; do not print WireGuard setup")
-	cmd.Flags().IntVar(&wgPort, "wg-port", 51820, "local WireGuard listen port for the interface")
+	cmd.Flags().IntVar(&wgPort, "wg-port", 51821, "local WireGuard listen port for the interface")
 	_ = cmd.MarkFlagRequired("server")
 	_ = cmd.MarkFlagRequired("token")
 	_ = cmd.MarkFlagRequired("hostname")
@@ -166,6 +167,26 @@ op_timeout: 10m
 		return err
 	}
 
+	// Everything the root-only `claymod wg-setup` needs: the local
+	// private key (never transmitted — generated above) plus the control
+	// server's peer parameters.
+	setup := wgSetup{
+		Interface:  "claymod0",
+		Overlay:    resp.WGIP + "/" + strconv.Itoa(overlayPrefixLen(resp.Overlay)),
+		ListenPort: o.wgPort,
+		PrivateKey: keys.Private,
+		ServerPeer: wgmgr.Peer{
+			Hostname:            "claymod-control",
+			PublicKey:           resp.WgServerPublicKey,
+			AllowedIPs:          resp.Overlay,
+			Endpoint:            resp.WgEndpoint,
+			PersistentKeepalive: 25,
+		},
+	}
+	if _, err := writeWGSetup(o.outDir, setup); err != nil {
+		return err
+	}
+
 	if !o.skipWG {
 		printWGSetup(out, o, resp, keys)
 	}
@@ -179,13 +200,12 @@ op_timeout: 10m
 // first.
 func printWGSetup(out io.Writer, o enrollOptions, resp *enroll.Response, keys wgmgr.KeyPair) {
 	fmt.Fprintf(out, "\nWireGuard interface setup (requires root):\n")
-	fmt.Fprintf(out, "  sudo awk -F'\"' '/private/ {print $4}' %s/wg-keys.json | sudo tee /run/claymod-wg.key >/dev/null && sudo chmod 600 /run/claymod-wg.key\n", o.outDir)
-	fmt.Fprintf(out, "  sudo ip link add dev claymod0 type wireguard\n")
-	fmt.Fprintf(out, "  sudo ip address add %s/24 dev claymod0\n", resp.WGIP)
-	fmt.Fprintf(out, "  sudo wg set claymod0 private-key /run/claymod-wg.key listen-port %d \\\n", o.wgPort)
-	fmt.Fprintf(out, "    peer %s endpoint %s allowed-ips 10.42.0.0/24 persistent-keepalive 25\n", resp.WgServerPublicKey, resp.WgEndpoint)
-	fmt.Fprintf(out, "  sudo ip link set up dev claymod0\n")
-	fmt.Fprintf(out, "  sudo rm /run/claymod-wg.key\n")
+	fmt.Fprintf(out, "  sudo claymod wg-setup --out-dir %s\n", o.outDir)
+	fmt.Fprintf(out, "\n(or, for operator-managed networking, read %s/wg-setup.json\n", o.outDir)
+	fmt.Fprintf(out, "and render the equivalent wg-quick config: interface %s, address %s/%s,\n",
+		"claymod0", resp.WGIP, fmt.Sprint(overlayPrefixLen(resp.Overlay)))
+	fmt.Fprintf(out, "peer %s endpoint %s allowed-ips %s persistent-keepalive 25)\n",
+		resp.WgServerPublicKey, resp.WgEndpoint, resp.Overlay)
 }
 
 // newFingerprintHTTPClient pins the server by SHA-256 certificate

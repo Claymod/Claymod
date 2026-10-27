@@ -8,10 +8,12 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -26,14 +28,16 @@ import (
 
 func newServeCmd() *cobra.Command {
 	var (
-		configPath    string
-		dataDir       string
-		agentNetwork  string
-		bootstrapAddr string
-		wgInterface   string
-		wgEndpoint    string
-		wgBackendMode string
-		serverName    string
+		configPath      string
+		dataDir         string
+		agentNetwork    string
+		bootstrapAddr   string
+		wgInterface     string
+		wgEndpoint      string
+		wgListenPort    int
+		manageInterface bool
+		wgBackendMode   string
+		serverName      string
 	)
 	cmd := &cobra.Command{
 		Use:   "serve",
@@ -44,14 +48,16 @@ over the WireGuard overlay.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runServe(cmd.Context(), cmd, serveOptions{
-				configPath:    configPath,
-				dataDir:       dataDir,
-				agentNetwork:  agentNetwork,
-				bootstrapAddr: bootstrapAddr,
-				wgInterface:   wgInterface,
-				wgEndpoint:    wgEndpoint,
-				wgBackendMode: wgBackendMode,
-				serverName:    serverName,
+				configPath:      configPath,
+				dataDir:         dataDir,
+				agentNetwork:    agentNetwork,
+				bootstrapAddr:   bootstrapAddr,
+				wgListenPort:    wgListenPort,
+				manageInterface: manageInterface,
+				wgInterface:     wgInterface,
+				wgEndpoint:      wgEndpoint,
+				wgBackendMode:   wgBackendMode,
+				serverName:      serverName,
 			})
 		},
 	}
@@ -60,21 +66,25 @@ over the WireGuard overlay.`,
 	cmd.Flags().StringVar(&agentNetwork, "agent-network", "10.42.0.0/24", "agent overlay CIDR (IPAM allocations)")
 	cmd.Flags().StringVar(&bootstrapAddr, "bootstrap-listen", ":8443", "HTTPS enrollment listen address")
 	cmd.Flags().StringVar(&wgInterface, "wg-interface", "claymod0", "WireGuard interface name (peers are managed on it)")
-	cmd.Flags().StringVar(&wgEndpoint, "wg-endpoint", "127.0.0.1:51820", "WireGuard endpoint agents connect to (host:port)")
+	cmd.Flags().StringVar(&wgEndpoint, "wg-endpoint", "127.0.0.1:51821", "WireGuard endpoint agents connect to (host:port)")
+	cmd.Flags().IntVar(&wgListenPort, "wg-port", 51821, "WireGuard UDP listen port (written to the generated config)")
+	cmd.Flags().BoolVar(&manageInterface, "manage-interface", false, "create/refresh the WireGuard interface (needs CAP_NET_ADMIN; peers via wgctrl)")
 	cmd.Flags().StringVar(&wgBackendMode, "wg-backend", "wgctrl", "WireGuard backend: wgctrl (real, needs root) or fake (testing)")
 	cmd.Flags().StringVar(&serverName, "server-name", "claymod", "CN/SAN on the bootstrap server certificate (agents pin it)")
 	return cmd
 }
 
 type serveOptions struct {
-	configPath    string
-	dataDir       string
-	agentNetwork  string
-	bootstrapAddr string
-	wgInterface   string
-	wgEndpoint    string
-	wgBackendMode string
-	serverName    string
+	configPath      string
+	dataDir         string
+	agentNetwork    string
+	bootstrapAddr   string
+	wgListenPort    int
+	manageInterface bool
+	wgInterface     string
+	wgEndpoint      string
+	wgBackendMode   string
+	serverName      string
 }
 
 func runServe(ctx context.Context, cmd *cobra.Command, o serveOptions) error {
@@ -111,6 +121,35 @@ func runServe(ctx context.Context, cmd *cobra.Command, o serveOptions) error {
 		return fmt.Errorf("unknown wireguard backend %q (want wgctrl or fake)", o.wgBackendMode)
 	}
 	wgMgr := wgmgr.NewWithKeys(o.wgInterface, st.WGKeys, backend, o.wgEndpoint)
+	wgMgr.Overlay = inv.ServerIP() + "/" + strconv.Itoa(overlayPrefixLen(cfg.AgentNetwork))
+	wgMgr.ListenPort = o.wgListenPort
+	wgMgr.ConfPath = wgmgr.ConfPath(cfg.DataDir, o.wgInterface)
+	// The inventory is the source of truth for the config file: serve
+	// and `host revoke` both regenerate from it, so neither can
+	// resurrect a peer the other removed.
+	wgMgr.PeersFunc = func() ([]wgmgr.Peer, error) {
+		return inventoryPeers(inv)
+	}
+
+	// Reinstall peers from the inventory (a restart must not lose the
+	// overlay) and rewrite the interface configuration.
+	peers, err := wgMgr.PeersFunc()
+	if err != nil {
+		return err
+	}
+	if err := wgMgr.Resync(peers); err != nil {
+		return fmt.Errorf("resync wireguard peers: %w", err)
+	}
+	log.Info("wireguard configuration written", "path", wgMgr.ConfPath, "peers", len(peers))
+
+	if o.manageInterface {
+		if err := wgmgr.EnsureInterface(wgMgr.ConfConfig()); err != nil {
+			return fmt.Errorf("manage-interface: %w", err)
+		}
+		log.Info("wireguard interface ensured", "interface", o.wgInterface)
+	} else {
+		log.Info("wireguard interface is operator-managed (apply the generated config with wg-quick / wg syncconf)")
+	}
 
 	enrollSrv := enroll.NewServer(inv, st.CA, wgMgr, log)
 	mux := enrollSrv.Handler()
@@ -295,7 +334,12 @@ func newHostRevokeCmd() *cobra.Command {
 			defer inv.Close()
 
 			// Revocation needs the inventory (host row + revocation
-			// serial) and the WG backend; no CA or server state.
+			// serial), the WireGuard state (peer removal + conf rewrite)
+			// and the WG backend. State is loaded, never created.
+			st, err := state.Load(cfg.DataDir)
+			if err != nil {
+				return err
+			}
 			var backend wgmgr.Backend
 			switch wgBackendMode {
 			case "fake":
@@ -305,8 +349,12 @@ func newHostRevokeCmd() *cobra.Command {
 			default:
 				return fmt.Errorf("unknown wireguard backend %q (want wgctrl or fake)", wgBackendMode)
 			}
-			wgMgr := wgmgr.NewWithKeys(wgInterface, wgmgr.KeyPair{}, backend, "")
-			enrollSrv := enroll.NewServer(inv, nil, wgMgr, newLogger(cfg.LogLevel))
+			wgMgr := wgmgr.NewWithKeys(wgInterface, st.WGKeys, backend, "")
+			wgMgr.ConfPath = wgmgr.ConfPath(cfg.DataDir, wgInterface)
+			wgMgr.PeersFunc = func() ([]wgmgr.Peer, error) {
+				return inventoryPeers(inv)
+			}
+			enrollSrv := enroll.NewServer(inv, st.CA, wgMgr, newLogger(cfg.LogLevel))
 
 			if err := enrollSrv.Revoke(args[0]); err != nil {
 				return err
@@ -320,6 +368,38 @@ func newHostRevokeCmd() *cobra.Command {
 	cmd.Flags().StringVar(&wgInterface, "wg-interface", "claymod0", "WireGuard interface name")
 	cmd.Flags().StringVar(&wgBackendMode, "wg-backend", "wgctrl", "WireGuard backend: wgctrl (real, needs root) or fake (testing)")
 	return cmd
+}
+
+// inventoryPeers maps enrolled hosts to WireGuard peers (skip hosts
+// without a key: enrolled before WireGuard keys existed).
+func inventoryPeers(inv *inventory.Inventory) ([]wgmgr.Peer, error) {
+	hosts, err := inv.ListHosts()
+	if err != nil {
+		return nil, err
+	}
+	peers := make([]wgmgr.Peer, 0, len(hosts))
+	for _, h := range hosts {
+		if h.PublicKey == "" {
+			continue
+		}
+		peers = append(peers, wgmgr.Peer{
+			Hostname:   h.Hostname,
+			PublicKey:  h.PublicKey,
+			AllowedIPs: h.WGIP + "/32",
+		})
+	}
+	return peers, nil
+}
+
+// overlayPrefixLen returns the prefix length of a CIDR string (default
+// 24 when unparsable).
+func overlayPrefixLen(cidr string) int {
+	_, p, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return 24
+	}
+	ones, _ := p.Mask.Size()
+	return ones
 }
 
 // generateToken returns a URL-safe random 256-bit token.

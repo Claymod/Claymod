@@ -16,7 +16,7 @@ workstation); nothing here needs claymod itself for setup.
           │  ssh (setup only)
           ├──────────────────────────────┐
           ▼                              ▼
-   ┌─────────────┐   UDP 51820    ┌──────────────┐
+   ┌─────────────┐   UDP 51821    ┌──────────────┐
    │ VPS         │◄──────────────►│ Debian VM    │
    │ control     │  WireGuard     │ web01        │
    │ TCP 8443    │   overlay      │ agent :2323  │
@@ -30,7 +30,7 @@ workstation); nothing here needs claymod itself for setup.
 | Control VPS | `VPS_IP` (public), overlay `10.42.0.1` | replace `VPS_IP` throughout |
 | Debian VM | `web01`, overlay `10.42.0.2` | any free IP in the CIDR |
 | Bootstrap HTTPS | TCP `8443` | `--bootstrap-listen` |
-| WireGuard | UDP `51820`, iface `claymod0` | `--wg-interface`, `--wg-endpoint` |
+| WireGuard | UDP `51821`, iface `claymod0` | `--wg-interface`, `--wg-endpoint` |
 | Agent port | TCP `2323` (tunnel only) | `--agent-port` / `--listen` |
 
 Both server and agent run as **root** in this guide (WireGuard and
@@ -38,7 +38,7 @@ systemd need it). The agent executes commands with its own privileges —
 that is by design and documented in `docs/security.md`.
 
 Ports to open on the VPS provider firewall (and `ufw`/`firewalld` if
-enabled): **TCP 8443** (enrollment, short-lived use) and **UDP 51820**
+enabled): **TCP 8443** (enrollment, short-lived use) and **UDP 51821**
 (the overlay; everything else flows through the tunnel). Nothing else is
 exposed: applies, facts and exec dial the agent inside the tunnel.
 
@@ -103,7 +103,7 @@ claymod serve \
   --bootstrap-listen 0.0.0.0:8443 \
   --server-name vps \
   --wg-interface claymod0 \
-  --wg-endpoint VPS_IP:51820 \
+  --wg-endpoint VPS_IP:51821 \
   --agent-network 10.42.0.0/24 \
   --wg-backend wgctrl
 ```
@@ -135,7 +135,7 @@ awk -F'"' '/private/ {print $4}' ~/claymod-data/wg-keys.json \
 
 ip link add dev claymod0 type wireguard
 ip address add 10.42.0.1/24 dev claymod0
-wg set claymod0 private-key /run/claymod-wg.key listen-port 51820
+wg set claymod0 private-key /run/claymod-wg.key listen-port 51821
 ip link set up dev claymod0
 rm /run/claymod-wg.key
 ```
@@ -158,7 +158,7 @@ Before=claymod-serve.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/bin/sh -c 'awk -F"\"" "/private/ {print \$4}" /root/claymod-data/wg-keys.json | tee /run/claymod-wg.key >/dev/null && chmod 600 /run/claymod-wg.key && ip link add dev claymod0 type wireguard && ip address add 10.42.0.1/24 dev claymod0 && wg set claymod0 private-key /run/claymod-wg.key listen-port 51820 && ip link set up dev claymod0 && rm /run/claymod-wg.key'
+ExecStart=/bin/sh -c 'awk -F"\"" "/private/ {print \$4}" /root/claymod-data/wg-keys.json | tee /run/claymod-wg.key >/dev/null && chmod 600 /run/claymod-wg.key && ip link add dev claymod0 type wireguard && ip address add 10.42.0.1/24 dev claymod0 && wg set claymod0 private-key /run/claymod-wg.key listen-port 51821 && ip link set up dev claymod0 && rm /run/claymod-wg.key'
 
 [Install]
 WantedBy=multi-user.target
@@ -174,7 +174,7 @@ Wants=network-online.target
 Requires=claymod-wg.service
 
 [Service]
-ExecStart=/usr/local/bin/claymod serve --data-dir /root/claymod-data --bootstrap-listen 0.0.0.0:8443 --server-name vps --wg-interface claymod0 --wg-endpoint VPS_IP:51820 --agent-network 10.42.0.0/24 --wg-backend wgctrl
+ExecStart=/usr/local/bin/claymod serve --data-dir /root/claymod-data --bootstrap-listen 0.0.0.0:8443 --server-name vps --wg-interface claymod0 --wg-endpoint VPS_IP:51821 --agent-network 10.42.0.0/24 --wg-backend wgctrl
 Restart=always
 RestartSec=5
 
@@ -263,8 +263,8 @@ awk -F'"' '/private/ {print $4}' /etc/claymod/wg-keys.json \
 
 ip link add dev claymod0 type wireguard
 ip address add <allocated-ip>/24 dev claymod0        # e.g. 10.42.0.2
-wg set claymod0 private-key /run/claymod-wg.key listen-port 51820 \
-  peer <server-public-key> endpoint VPS_IP:51820 \
+wg set claymod0 private-key /run/claymod-wg.key listen-port 51821 \
+  peer <server-public-key> endpoint VPS_IP:51821 \
   allowed-ips 10.42.0.0/24 persistent-keepalive 25
 ip link set up dev claymod0
 rm /run/claymod-wg.key
@@ -420,7 +420,7 @@ tcpdump -ni any port 2323            # then run an apply in another shell
 
 - [ ] enrollment pinned: wrong `--ca-pin` refused
 - [ ] token single-use: second enroll with the same token refused
-- [ ] `wg show` shows handshakes both sides; only UDP 51820 + TCP 8443
+- [ ] `wg show` shows handshakes both sides; only UDP 51821 + TCP 8443
       touch the public interface (optional `tcpdump` check)
 - [ ] apply #1 → `N changed`; apply #2 → `0 changed` (idempotent over
       real mTLS + WireGuard)

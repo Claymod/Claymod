@@ -33,6 +33,7 @@ them to enrolled hosts over a WireGuard tunnel.`,
 	root.AddCommand(newEnrollCmd())
 	root.AddCommand(newHostCmd())
 	root.AddCommand(newExecCmd())
+	root.AddCommand(newWGSetupCmd())
 	return root
 }
 

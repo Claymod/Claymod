@@ -39,6 +39,8 @@ func startAgentWithCA(t *testing.T, authority *ca.CA, agentCN string) int {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// 127.0.0.2: first host address in a 127.0.0.0/8 overlay (127.0.0.1
+	// is reserved for the control server — IPAM, 2026-10-27).
 	ln, err := proto.Listen("127.0.0.1:0", agentID, authority.Pool())
 	if err != nil {
 		t.Fatal(err)
