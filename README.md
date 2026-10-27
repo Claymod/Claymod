@@ -1,0 +1,192 @@
+# claymod
+
+A push-based IaC tool in the spirit of Puppet and Ansible: a control
+server compiles PKL playbooks into primitive ops and pushes them to
+enrolled hosts over a WireGuard overlay, secured end-to-end with mutual
+TLS. Small dependency footprint, one static binary.
+
+```
+                 ┌──────────────┐   HTTPS bootstrap (token → identity)
+   operator ───▶ │ control      │ ◀─────────────┐
+                 │ (claymod     │               │
+                 │  serve)      │   framed mTLS │
+                 └──────┬───────┘   over the    │
+                        │           WireGuard  │
+                 WireGuard overlay   overlay    │
+                        │               │       │
+                 ┌──────┴───────┐       │  ┌────┴──────┐
+                 │ agent (web01)│◀──────┘  │ agent     │
+                 └──────────────┘          │ (db01)…   │
+                                           └───────────┘
+```
+
+- **Playbooks in PKL** (`pkl/claymod/` schema): declarative resources
+  (`std.files`, `std.commands`, `std.service`) with per-host vars and
+  dependencies; compiled server-side to primitive ops — agents never see
+  PKL.
+- **Enrollment**: one-time tokens over an HTTPS bootstrap endpoint; the
+  host generates its own WireGuard key pair (private key never leaves it)
+  and receives its mTLS identity. Revocation is CRL-lite.
+- **Transport**: framed JSON over mutual TLS 1.3, tunneled through
+  WireGuard. Nothing else is exposed.
+- **Dependencies**: cobra, yaml.v3, modernc.org/sqlite, wgctrl, plus the
+  `pkl` CLI on the control server (server-side only).
+
+## Install
+
+```sh
+make build          # produces ./bin/claymod
+go test ./...       # run the test suite (pkl-dependent tests auto-skip
+                    # without the pkl CLI; run scripts/bootstrap-pkl.sh
+                    # first for full coverage)
+```
+
+The control server needs the `pkl` CLI on its PATH
+(`scripts/bootstrap-pkl.sh` installs it locally). Agents need nothing
+but the binary.
+
+## Quickstart (loopback, ~2 minutes)
+
+Everything below runs on one machine against loopback — no root, no
+WireGuard interface — and exercises the real enrollment flow. It is
+copy-paste verbatim: every command below has been run exactly as
+printed.
+
+```sh
+# 1. Write a demo playbook (3 resources under /tmp, no root needed).
+mkdir -p demo/files
+cat > demo/files/motd.txt <<'EOF'
+Managed by claymod — hello from the demo.
+EOF
+cat > demo/files/conf.tmpl <<'EOF'
+host = {{.Host}}
+greeting = {{.Vars.greeting}}
+port = {{.Vars.port}}
+EOF
+cat > demo/playbook.pkl <<'EOF'
+amends "modulepath:/claymod/base.pkl"
+import "modulepath:/claymod/std/files.pkl"
+import "modulepath:/claymod/std/commands.pkl"
+
+hosts { "web01" }
+vars  { ["greeting"] = "hello" }
+
+resources {
+  new files.Copy {
+    name = "motd"
+    source = "files/motd.txt"
+    dest = "/tmp/claymod-demo-motd.txt"
+    mode = "0644"
+  }
+  new files.Template {
+    name = "conf"
+    source = "files/conf.tmpl"
+    dest = "/tmp/claymod-demo-conf.txt"
+    vars { ["port"] = "8080" }
+  }
+  new commands.Shell {
+    name = "marker"
+    command = "date > /tmp/claymod-demo-marker.txt"
+    creates = "/tmp/claymod-demo-marker.txt"
+    dependsOn { "conf" }
+  }
+}
+EOF
+
+# 2. Start the control server (creates the CA + identities in ./demo).
+#    Loopback demo: the overlay network is 127.0.0.0/8 so the allocated
+#    address is 127.0.0.1 — where the agent actually listens.
+bin/claymod serve --data-dir demo --agent-network 127.0.0.0/8 \
+  --bootstrap-listen 127.0.0.1:8443 \
+  --server-name localhost --wg-backend fake
+
+# 3. In a second shell: issue a one-time token for host "web01".
+bin/claymod host token web01 --data-dir demo --token-file demo/token
+
+# 4. Enroll the host (pinned to the CA the server just created).
+bin/claymod enroll --server https://localhost:8443 \
+  --token "$(cat demo/token)" --hostname web01 \
+  --ca demo/ca/ca.pem --out-dir demo/host --listen 127.0.0.1:2323 \
+  --skip-wg-config
+
+# 5. Start the agent on the enrolled identity.
+bin/claymod agent --config demo/host/agent.yaml
+```
+
+In a third shell, apply the playbook (the agent listens on
+`127.0.0.1:2323`; the demo inventory records that address for web01):
+
+```sh
+# 6. Validate and plan, then apply.
+bin/claymod playbook validate demo/playbook.pkl
+bin/claymod playbook plan demo/playbook.pkl
+bin/claymod playbook apply demo/playbook.pkl \
+  --data-dir demo --agent-network 127.0.0.0/8 --agent-port 2323
+```
+
+The first apply reports `3 ok, 3 changed`; running it again reports
+`3 ok, 0 changed` — applies are idempotent. More:
+
+```sh
+bin/claymod host facts web01 --data-dir demo --agent-port 2323   # live facts
+bin/claymod exec --host web01 --data-dir demo --agent-port 2323 -- uname -a
+bin/claymod exec --host web01 --data-dir demo --agent-port 2323 --shell 'echo hi from $(hostname)'
+bin/claymod playbook apply demo/playbook.pkl \
+  --data-dir demo --agent-network 127.0.0.0/8 --agent-port 2323 --check
+```
+
+For a real deployment (WireGuard interface, host tokens over the
+network, revocation) see [docs/enrollment.md](docs/enrollment.md).
+
+## Playbooks
+
+```pkl
+amends "modulepath:/claymod/base.pkl"
+import "modulepath:/claymod/std/files.pkl"
+import "modulepath:/claymod/std/service.pkl"
+
+hosts { "web01" }
+vars  { ["domain"] = "example.internal" }
+
+resources {
+  new files.Template {
+    name = "nginx.conf"
+    source = "templates/nginx.conf.tmpl"
+    dest = "/etc/nginx/nginx.conf"
+  }
+  new service.Unit {
+    name = "nginx"
+    unit = "nginx"
+    state = "started"
+    enabled = true
+    dependsOn { "nginx.conf" }
+  }
+}
+```
+
+Full authoring guide: [docs/playbooks.md](docs/playbooks.md). Examples
+live in [examples/](examples/).
+
+## Verification
+
+The [simulation](simulation/README.md) runs the complete lifecycle in
+Docker (or loopback with `--local`): token → HTTPS bootstrap → enrollment
+→ agent → TLS probe suite, including negative checks (rogue client
+certificate, missing client certificate, untrusted server).
+
+## Documentation
+
+| Document | Contents |
+|---|---|
+| [docs/architecture.md](docs/architecture.md) | components, data flow, trust model |
+| [docs/protocol.md](docs/protocol.md) | framed mTLS protocol spec |
+| [docs/playbooks.md](docs/playbooks.md) | playbook authoring guide |
+| [docs/enrollment.md](docs/enrollment.md) | enrollment + revocation runbook |
+| [docs/security.md](docs/security.md) | threat model and security notes |
+| [simulation/README.md](simulation/README.md) | TLS/enrollment verification |
+
+## Status
+
+Phases 0–8 of the plan are implemented and tested (`go test -race ./...`
+clean). Remaining: hardening (Phase 9) — fuzzing the frame codec,
+connection limits, reconnection, graceful shutdown, systemd unit.

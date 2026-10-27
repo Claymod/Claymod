@@ -1,0 +1,129 @@
+# Playbook authoring guide
+
+Playbooks are PKL documents that declare *what* a set of hosts should
+look like. They are compiled on the control server to primitive ops and
+pushed to agents — you write intent, the pipeline decides the
+operations.
+
+## Anatomy
+
+```pkl
+amends "modulepath:/claymod/base.pkl"      // the claymod schema
+import "modulepath:/claymod/std/files.pkl" // resource families
+
+hosts { "web01" "web02" }                  // targets (exact names)
+vars  { ["domain"] = "example.internal" }  // per-host template vars
+
+resources {
+  new files.Template {
+    name = "app.conf"
+    source = "templates/app.conf.tmpl"
+    dest = "/etc/app.conf"
+    mode = "0640"
+    vars { ["port"] = "8080" }             // merged over playbook vars
+  }
+  new service.Unit {
+    name = "app"
+    unit = "myapp"
+    state = "started"
+    enabled = true
+    dependsOn { "app.conf" }               // run after the config lands
+  }
+}
+```
+
+Rules learned the hard way (PKL specifics):
+
+- The playbook **amends** `modulepath:/claymod/base.pkl` — one root
+  document, modules come from the schema directory (default `./pkl`,
+  override with `CLAYMOD_SCHEMA_DIR`).
+- Amended properties **must not repeat type annotations** and may not
+  introduce new non-local properties: `hosts`, `vars`, `resources` and
+  `hostName` are declared in `base.pkl`.
+- `dependsOn` refers to resource **names**; the planner topologically
+  sorts resources (declaration order is only a tie-breaker). Dependency
+  cycles are an error and name the cycle: `a -> b -> c -> a`.
+
+## Resource reference
+
+### std.files
+
+| Resource | Purpose | Key fields |
+|---|---|---|
+| `files.Copy` | copy a static file | `source`, `dest`, `mode`, `owner`, `group`, `backup` |
+| `files.Template` | render a Go template server-side | `source`, `dest`, `mode`, `vars`, `backup` |
+| `files.Directory` | ensure a directory (or absence) | `path`, `mode`, `ensure` (`directory`/`absent`) |
+
+Paths: `source` is relative to the playbook's directory; `dest`/`path`
+must be absolute on the host. `backup = true` keeps a `.bak` copy of
+overwritten files.
+
+### std.commands
+
+| Resource | Purpose | Key fields |
+|---|---|---|
+| `commands.Shell` | run a command | `command` **or** `argv` (exactly one), `cwd`, `env`, `timeout` |
+| `commands.Script` | write + run a script | `content`, `path`, `mode` (default `0755`) |
+
+Guards (both resources): `onlyIf`, `unlessIf` (shell conditions),
+`creates`, `removes` (path existence). A guarded command that should be
+skipped reports `changed=false` — re-running a playbook is safe.
+
+> `commands` is the imperative escape hatch: it runs with the agent's
+> privileges. Prefer `files` where declarative is possible.
+
+### std.service
+
+| Resource | Purpose | Key fields |
+|---|---|---|
+| `service.Unit` | systemd unit management | `unit`, `state` (`started`/`stopped`/`restarted`/`reloaded`), `enabled` (nullable) |
+
+`enabled` omitted/null leaves boot enablement unchanged.
+
+## Templates
+
+`files.Template` and `commands.Script` content render server-side with
+Go `text/template` (`missingkey=error` — a typo fails the apply, never
+produces a half-rendered file):
+
+```
+# {{.Host}}
+listen_port = {{.Vars.port}}
+```
+
+- `.Host` — the target hostname (or `--host` override on apply).
+- `.Vars` — playbook `vars` merged with the resource's own `vars`
+  (resource wins).
+- Functions: `file` (read a file relative to the playbook dir),
+  `trimSpace`, `quote`, `default`, `lower`, `upper`. Deliberately
+  minimal — no sprig.
+
+## Workflow
+
+```sh
+claymod playbook validate playbook.pkl   # schema, names, deps, cycles
+claymod playbook plan playbook.pkl       # dependency-ordered task list
+claymod playbook apply playbook.pkl      # push to the targeted hosts
+claymod playbook apply playbook.pkl --check   # dry run
+```
+
+Useful `apply` flags: `--limit web01,web02` (subset), `--verbose`
+(per-op detail), `--check` (would-change only), `--parallel N`,
+`--max-fail N` (failure policy).
+
+Applies are **idempotent**: unchanged resources report `changed=false`,
+so a re-run is cheap and safe. Per-host rendering means `{{.Host}}` and
+per-host vars resolve per target — one playbook, many hosts.
+
+## Examples
+
+- [`examples/basic-setup/`](../examples/basic-setup/) — Copy + Template
+  + Directory.
+- [`examples/nginx/`](../examples/nginx/) — Template + service.Unit with
+  a dependency.
+
+Validate any of them right away:
+
+```sh
+claymod playbook validate examples/nginx/playbook.pkl
+```

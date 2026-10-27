@@ -16,3 +16,6 @@ coverage.*
 
 # TLS simulation artifacts
 /simulation/.sim-local/
+
+# README quickstart demo artifacts
+/demo/
