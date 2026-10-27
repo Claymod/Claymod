@@ -1,0 +1,15 @@
+# Tidet resources are synced by Tidet Cloud, never by Git.
+.tidet/
+
+# Previous implementation, kept untouched as an independent repo
+.old_claymod/
+
+# Go build artifacts
+/claymod
+/bin/
+*.test
+*.out
+coverage.*
+
+# pkl CLI bootstrap output
+/scripts/.pkl-cache/
