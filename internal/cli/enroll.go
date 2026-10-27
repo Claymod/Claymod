@@ -174,14 +174,18 @@ op_timeout: 10m
 
 // printWGSetup prints the exact commands to bring up the WireGuard
 // interface (documented in docs/enrollment.md). The interface itself is
-// created by the operator — root is required.
+// created by the operator — root is required. wg(8) expects the private
+// key as a raw base64 file, so the JSON wg-keys.json must be unpacked
+// first.
 func printWGSetup(out io.Writer, o enrollOptions, resp *enroll.Response, keys wgmgr.KeyPair) {
 	fmt.Fprintf(out, "\nWireGuard interface setup (requires root):\n")
+	fmt.Fprintf(out, "  sudo awk -F'\"' '/private/ {print $4}' %s/wg-keys.json | sudo tee /run/claymod-wg.key >/dev/null && sudo chmod 600 /run/claymod-wg.key\n", o.outDir)
 	fmt.Fprintf(out, "  sudo ip link add dev claymod0 type wireguard\n")
 	fmt.Fprintf(out, "  sudo ip address add %s/24 dev claymod0\n", resp.WGIP)
-	fmt.Fprintf(out, "  sudo wg set claymod0 private-key %s/wg-keys.json listen-port %d \\\n", o.outDir, o.wgPort)
+	fmt.Fprintf(out, "  sudo wg set claymod0 private-key /run/claymod-wg.key listen-port %d \\\n", o.wgPort)
 	fmt.Fprintf(out, "    peer %s endpoint %s allowed-ips 10.42.0.0/24 persistent-keepalive 25\n", resp.WgServerPublicKey, resp.WgEndpoint)
 	fmt.Fprintf(out, "  sudo ip link set up dev claymod0\n")
+	fmt.Fprintf(out, "  sudo rm /run/claymod-wg.key\n")
 }
 
 // newFingerprintHTTPClient pins the server by SHA-256 certificate

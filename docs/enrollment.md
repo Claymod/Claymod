@@ -80,10 +80,13 @@ port (2323). No inbound port is exposed beyond the tunnel.
 **Control server** (once, before agents can tunnel):
 
 ```sh
+# wg(8) wants the raw base64 key; wg-keys.json is JSON, so unpack it first.
+sudo awk -F'"' '/private/ {print $4}' claymod-data/wg-keys.json | sudo tee /run/claymod-wg.key >/dev/null && sudo chmod 600 /run/claymod-wg.key
 sudo ip link add dev claymod0 type wireguard
 sudo ip address add 10.42.0.1/24 dev claymod0
-sudo wg set claymod0 private-key claymod-data/wg-keys.json listen-port 51820
+sudo wg set claymod0 private-key /run/claymod-wg.key listen-port 51820
 sudo ip link set up dev claymod0
+sudo rm /run/claymod-wg.key
 ```
 
 Peers are installed automatically by `claymod serve` (wgctrl backend) as
@@ -92,12 +95,15 @@ hosts enroll; `claymod host revoke` removes them.
 **Agent host** (the `enroll` command prints these exact commands):
 
 ```sh
+# wg(8) wants the raw base64 key; wg-keys.json is JSON, so unpack it first.
+sudo awk -F'"' '/private/ {print $4}' /etc/claymod/wg-keys.json | sudo tee /run/claymod-wg.key >/dev/null && sudo chmod 600 /run/claymod-wg.key
 sudo ip link add dev claymod0 type wireguard
 sudo ip address add <allocated-ip>/24 dev claymod0
-sudo wg set claymod0 private-key /etc/claymod/wg-keys.json listen-port 51820 \
+sudo wg set claymod0 private-key /run/claymod-wg.key listen-port 51820 \
   peer <server-public-key> endpoint <server-endpoint> \
   allowed-ips 10.42.0.0/24 persistent-keepalive 25
 sudo ip link set up dev claymod0
+sudo rm /run/claymod-wg.key
 ```
 
 Verify the tunnel: `sudo wg show` (both sides should list each other) and
