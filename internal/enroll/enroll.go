@@ -1,19 +1,19 @@
-// Package enroll implements claymod's enrollment flow: a one-time-token
-// exchange over an HTTPS bootstrap endpoint that registers a host in the
-// inventory, issues its client certificate and installs it as a WireGuard
-// peer. The agent's WireGuard private key is generated on the host and
-// never leaves it; the client certificate keypair is issued server-side
-// and returned only over TLS.
+// Package enroll defines the enrollment wire contract and the CLIENT
+// side of it: a one-time token exchanged over the control server's HTTPS
+// bootstrap endpoint for the host's identity material. The agent's
+// WireGuard private key is generated on the host and never leaves it.
 //
-// Flow (client → server, all over HTTPS):
+// Deliberately light (stdlib only): the agent binary links this package
+// without pulling in inventory, the CA or wgctrl. The server side lives
+// in internal/enrollserver.
+//
+// Flow (client -> server, all over HTTPS):
 //
 //  1. POST /enroll {token, hostname, wg_public_key}
-//  2. server: consume token (atomic), allocate WG IP, issue client cert,
-//     register WG peer, store host — one transactional enrollment
-//  3. response {wg_ip, ca_cert, client_cert, client_key, wg_server_public,
-//     wg_endpoint}
-//  4. client writes /etc/claymod/{agent.yaml,ca.pem,agent.pem,agent-key.pem}
-//     and brings up its WireGuard interface (see docs/enrollment.md).
+//  2. response {wg_ip, overlay, ca_cert, client_cert, client_key,
+//     wg_server_public, wg_endpoint}
+//  3. client writes /etc/claymod/{agent.yaml,ca.pem,agent.pem,
+//     agent-key.pem,wg-setup.json} and brings up WireGuard.
 package enroll
 
 import (
@@ -24,13 +24,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"time"
-
-	"github.com/claymod/claymod/internal/ca"
-	"github.com/claymod/claymod/internal/inventory"
-	"github.com/claymod/claymod/internal/wgmgr"
 )
 
 // Request is the client's enrollment request.
@@ -61,150 +56,6 @@ type Response struct {
 	// Overlay is the agent network aggregate (e.g. 10.42.0.0/24) routed
 	// to the control server on the host's side of the tunnel.
 	Overlay string `json:"overlay"`
-}
-
-// Server is the HTTPS bootstrap endpoint. It requires TLS (run it behind
-// the internal CA's server certificate).
-type Server struct {
-	Inv *inventory.Inventory
-	CA  *ca.CA
-	WG  *wgmgr.Manager
-	Log *slog.Logger
-	// HostnameHeader optionally pins the expected hostname header.
-	now func() time.Time
-}
-
-// NewServer wires a bootstrap server.
-func NewServer(inv *inventory.Inventory, authority *ca.CA, wg *wgmgr.Manager, log *slog.Logger) *Server {
-	if log == nil {
-		log = slog.Default()
-	}
-	return &Server{Inv: inv, CA: authority, WG: wg, Log: log, now: time.Now}
-}
-
-// Handler returns the HTTP mux for the bootstrap endpoint.
-func (s *Server) Handler() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /enroll", s.handleEnroll)
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-	return mux
-}
-
-func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
-	var req Request
-	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
-	if err != nil {
-		httpError(w, http.StatusBadRequest, "read request: "+err.Error())
-		return
-	}
-	if err := json.Unmarshal(body, &req); err != nil {
-		httpError(w, http.StatusBadRequest, "parse request: "+err.Error())
-		return
-	}
-	if req.Token == "" || req.Hostname == "" || req.WgPublicKey == "" {
-		httpError(w, http.StatusBadRequest, "token, hostname and wg_public_key are required")
-		return
-	}
-
-	resp, err := s.Enroll(r.Context(), req)
-	if err != nil {
-		s.Log.Warn("enrollment refused",
-			"hostname", req.Hostname, "remote", r.RemoteAddr, "err", err)
-		status := http.StatusBadRequest
-		switch {
-		case err == inventory.ErrTokenNotFound || err == inventory.ErrTokenExpired ||
-			err == inventory.ErrTokenUsed || err == inventory.ErrHostExists:
-			status = http.StatusUnauthorized
-		}
-		httpError(w, status, err.Error())
-		return
-	}
-	s.Log.Info("host enrolled",
-		"hostname", resp.Hostname, "wg_ip", resp.WGIP, "remote", r.RemoteAddr)
-
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
-}
-
-// Enroll performs the full enrollment: consume the token, issue the
-// client certificate, register the WireGuard peer and store the host.
-// The inventory enrollment is atomic (token + IP + host row in one tx).
-func (s *Server) Enroll(ctx context.Context, req Request) (*Response, error) {
-	// Issue the agent's identity BEFORE the inventory transaction so a
-	// CA failure never burns a token. Two details are load-bearing:
-	//
-	//   - DNSNames carries the hostname: the runner dials the agent with
-	//     ServerName=hostname, and Go (>=1.15) ignores the CN for
-	//     hostname verification.
-	//   - Usage is ServerAuth, not ClientAuth: the agent LISTENS (it is
-	//     the TLS server), the control server dials. The agent's
-	//     certificate is verified as a server certificate by the runner.
-	certPEM, keyPEM, err := s.CA.IssueCert(ca.IssueOptions{
-		CommonName: req.Hostname,
-		Usage:      ca.UsageServer,
-		DNSNames:   []string{req.Hostname},
-		Validity:   365 * 24 * time.Hour,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("issue client certificate: %w", err)
-	}
-
-	host, err := s.Inv.EnrollHost(req.Token, req.Hostname, req.WgPublicKey, string(certPEM))
-	if err != nil {
-		return nil, err
-	}
-
-	// Install the WireGuard peer. Failure here rolls the host back so the
-	// inventory and the overlay never disagree.
-	if err := s.WG.Enroll(req.Hostname, req.WgPublicKey, host.WGIP); err != nil {
-		// Best-effort cleanup: free the IP and drop the host row.
-		if rmErr := s.Inv.RemoveHost(req.Hostname); rmErr != nil {
-			s.Log.Error("rollback after wg failure", "hostname", req.Hostname, "err", rmErr)
-		}
-		return nil, fmt.Errorf("register wireguard peer: %w", err)
-	}
-
-	return &Response{
-		Hostname:          host.Hostname,
-		WGIP:              host.WGIP,
-		CACert:            s.CA.CertPEM(),
-		ClientCert:        certPEM,
-		ClientKey:         keyPEM,
-		WgServerPublicKey: s.WG.ControlKeys.Public,
-		WgEndpoint:        s.WG.ServerEndpoint,
-		Overlay:           s.Inv.Overlay(),
-	}, nil
-}
-
-// Revoke performs the full revocation for a host: remove the WireGuard
-// peer, record the certificate serial (CRL-lite) and drop the host row
-// (freeing its IP).
-func (s *Server) Revoke(hostname string) error {
-	host, err := s.Inv.GetHost(hostname)
-	if err != nil {
-		return err
-	}
-	// Record the certificate serial before removing the row (the serial
-	// is derived from the stored PEM).
-	if host.CertPEM != "" {
-		if cert, err := ca.ParseCertPEM([]byte(host.CertPEM)); err == nil {
-			if err := s.Inv.AddRevocation(cert.SerialNumber.String(), hostname); err != nil {
-				return err
-			}
-		}
-	}
-	if err := s.WG.Revoke(host.PublicKey); err != nil {
-		return err
-	}
-	if err := s.Inv.RemoveHost(hostname); err != nil {
-		return err
-	}
-	// The config file's peer list comes from the inventory: refresh it
-	// now that the host row is gone (WG.Revoke persisted too early — the
-	// row was still there at that point).
-	return s.WG.RefreshConf()
 }
 
 // EnrollClient enrolls this host against a bootstrap server over HTTPS.
@@ -263,10 +114,4 @@ func NewPinnedClient(caPEM []byte) (*http.Client, error) {
 			},
 		},
 	}, nil
-}
-
-func httpError(w http.ResponseWriter, status int, msg string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }

@@ -1,4 +1,4 @@
-package enroll
+package enrollserver
 
 import (
 	"context"
@@ -18,8 +18,10 @@ import (
 	"time"
 
 	"github.com/claymod/claymod/internal/ca"
+	"github.com/claymod/claymod/internal/enroll"
 	"github.com/claymod/claymod/internal/inventory"
 	"github.com/claymod/claymod/internal/proto"
+	"github.com/claymod/claymod/internal/wgmanager"
 	"github.com/claymod/claymod/internal/wgmgr"
 )
 
@@ -29,7 +31,7 @@ type testServer struct {
 	URL    string
 	Inv    *inventory.Inventory
 	CA     *ca.CA
-	WG     *wgmgr.Manager
+	WG     *wgmanager.Manager
 	Enroll *Server
 	client *http.Client
 	t      *testing.T
@@ -63,7 +65,7 @@ func newTestServer(t *testing.T) *testServer {
 	}
 	t.Cleanup(func() { inv.Close() })
 
-	wg, err := wgmgr.New("claymod0", wgmgr.NewFakeBackend(), "127.0.0.1:51821")
+	wg, err := wgmanager.New("claymod0", wgmanager.NewFakeBackend(), "127.0.0.1:51821")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +82,7 @@ func newTestServer(t *testing.T) *testServer {
 	ts.StartTLS()
 	t.Cleanup(ts.Close)
 
-	client, err := NewPinnedClient(authority.CertPEM())
+	client, err := enroll.NewPinnedClient(authority.CertPEM())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,13 +98,13 @@ func newTestServer(t *testing.T) *testServer {
 }
 
 // enroll is a client-side enrollment call using a fresh WG key pair.
-func (s *testServer) enroll(token, hostname string) (*Response, error) {
+func (s *testServer) enroll(token, hostname string) (*enroll.Response, error) {
 	s.t.Helper()
 	keys, err := wgmgr.GenerateKeyPair()
 	if err != nil {
 		s.t.Fatal(err)
 	}
-	return EnrollClient(context.Background(), s.URL, s.client, Request{
+	return enroll.EnrollClient(context.Background(), s.URL, s.client, enroll.Request{
 		Token:       token,
 		Hostname:    hostname,
 		WgPublicKey: keys.Public,
@@ -227,11 +229,11 @@ func TestEnrollClientRejectsUntrustedServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, err := NewPinnedClient(rogue.CertPEM())
+	client, err := enroll.NewPinnedClient(rogue.CertPEM())
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = EnrollClient(context.Background(), s.URL, client, Request{
+	_, err = enroll.EnrollClient(context.Background(), s.URL, client, enroll.Request{
 		Token: "tok1", Hostname: "web01", WgPublicKey: "pk",
 	})
 	if err == nil {
@@ -275,7 +277,7 @@ func TestRevokeLifecycle(t *testing.T) {
 }
 
 func TestNewPinnedClientRejectsEmptyBundle(t *testing.T) {
-	if _, err := NewPinnedClient([]byte("not a cert")); err == nil {
+	if _, err := enroll.NewPinnedClient([]byte("not a cert")); err == nil {
 		t.Fatal("NewPinnedClient accepted a garbage bundle")
 	}
 }
@@ -299,7 +301,7 @@ func TestFingerprintPinning(t *testing.T) {
 
 	// A client pinning exactly this fingerprint connects fine.
 	pinned := newFingerprintClient(t, fingerprint)
-	resp, err := EnrollClient(context.Background(), s.URL, pinned, Request{
+	resp, err := enroll.EnrollClient(context.Background(), s.URL, pinned, enroll.Request{
 		Token: "tok1", Hostname: "web01", WgPublicKey: "pk",
 	})
 	if err != nil {
@@ -311,7 +313,7 @@ func TestFingerprintPinning(t *testing.T) {
 
 	// A client pinning a wrong fingerprint is refused.
 	wrong := newFingerprintClient(t, "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
-	_, err = EnrollClient(context.Background(), s.URL, wrong, Request{
+	_, err = enroll.EnrollClient(context.Background(), s.URL, wrong, enroll.Request{
 		Token: "tok2", Hostname: "web02", WgPublicKey: "pk",
 	})
 	if err == nil {
