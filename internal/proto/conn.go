@@ -62,10 +62,14 @@ func Listen(addr string, id Identity, clientPool *x509.CertPool) (net.Listener, 
 // when given).
 func Dial(addr, serverName string, id Identity, serverPool *x509.CertPool) (*Conn, error) {
 	cfg := &tls.Config{
-		Certificates: []tls.Certificate{id.Certificate},
-		RootCAs:      serverPool,
-		ServerName:   serverName,
-		MinVersion:   tls.VersionTLS13,
+		RootCAs:    serverPool,
+		ServerName: serverName,
+		MinVersion: tls.VersionTLS13,
+	}
+	// An empty Identity presents no client certificate (used by negative
+	// TLS probes against agents that require mutual TLS).
+	if id.Certificate.PrivateKey != nil {
+		cfg.Certificates = []tls.Certificate{id.Certificate}
 	}
 	d := net.Dialer{Timeout: defaultDialTimeout}
 	raw, err := d.Dial("tcp", addr)
