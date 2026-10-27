@@ -29,6 +29,9 @@ them to enrolled hosts over a WireGuard tunnel.`,
 	root.AddCommand(newAgentCmd())
 	root.AddCommand(newProbeCmd())
 	root.AddCommand(newPlaybookCmd())
+	root.AddCommand(newServeCmd())
+	root.AddCommand(newEnrollCmd())
+	root.AddCommand(newHostCmd())
 	return root
 }
 
