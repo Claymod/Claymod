@@ -200,12 +200,14 @@ sqlite3 ~/claymod-data/inventory.db "select hostname, public_key, wg_ip from hos
 wg set claymod0 peer <public_key> allowed-ips <wg_ip>/32
 ```
 
-(A full reboot with the units above is fine: enrollment-time peers are
-gone, but each *agent* side keeps its `persistent-keepalive 25` and
-re-initiates the tunnel to the server endpoint — a fresh handshake
-re-establishes the session; the server side keeps the peer config only
-if the interface itself survived. If you recreate the interface, run the
-`wg set` loop above.)
+(A full reboot **requires re-adding the peers**: the `claymod-wg`
+unit recreates `claymod0` with only the server's private key — no
+peers — and `serve` does not re-sync them from the inventory. WireGuard
+silently drops handshake initiations from unknown public keys, so the
+agents' `persistent-keepalive 25` alone cannot restore the tunnel:
+every keepalive is dropped until its public key is known again. After
+any reboot, run the `sqlite3` + `wg set` loop above for every enrolled
+host.)
 
 ## Phase 2 — Enroll the Debian VM
 
