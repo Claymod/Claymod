@@ -16,6 +16,8 @@ type RenderContext struct {
 	// Vars are the playbook's per-host variables (merged with each
 	// Template resource's own vars).
 	Vars map[string]string
+	// PlaybookDir is the base directory for the `file` template function.
+	PlaybookDir string
 }
 
 // RenderTemplate renders a template file for one host. The template
@@ -26,6 +28,33 @@ func RenderTemplate(templatePath string, ctx RenderContext) (string, error) {
 		return "", fmt.Errorf("read template %s: %w", templatePath, err)
 	}
 	return RenderTemplateString(string(data), ctx)
+}
+
+// templateFuncs is the minimal function set available to templates
+// (deliberately sprig-free): file, trimSpace, quote, default, lower, upper.
+func templateFuncs(ctx RenderContext) template.FuncMap {
+	return template.FuncMap{
+		// file reads a file relative to the playbook directory (or
+		// absolute), returning its trimmed contents.
+		"file": func(path string) (string, error) {
+			resolved := ResolveSource(ctx.PlaybookDir, path)
+			data, err := os.ReadFile(resolved)
+			if err != nil {
+				return "", fmt.Errorf("file %s: %w", path, err)
+			}
+			return strings.TrimRight(string(data), "\n"), nil
+		},
+		"trimSpace": strings.TrimSpace,
+		"quote":     func(s string) string { return fmt.Sprintf("%q", s) },
+		"default": func(fallback, v string) string {
+			if v == "" {
+				return fallback
+			}
+			return v
+		},
+		"lower": strings.ToLower,
+		"upper": strings.ToUpper,
+	}
 }
 
 // RenderTemplateString renders template text for one host.
@@ -39,7 +68,7 @@ func RenderTemplateString(text string, ctx RenderContext) (string, error) {
 		Vars map[string]string
 	}{Host: ctx.Host, Vars: vars}
 
-	tmpl, err := template.New("claymod").Option("missingkey=error").Parse(text)
+	tmpl, err := template.New("claymod").Option("missingkey=error").Funcs(templateFuncs(ctx)).Parse(text)
 	if err != nil {
 		return "", fmt.Errorf("parse template: %w", err)
 	}
