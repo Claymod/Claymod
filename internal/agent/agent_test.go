@@ -344,6 +344,23 @@ func TestApplyCommandGuards(t *testing.T) {
 	}
 }
 
+func TestApplyEmptyCommandDoesNotPanic(t *testing.T) {
+	conn := startAgent(t, Options{})
+	// No Shell and no Argv must not panic (the whole agent would crash).
+	results := callApply(t, conn, proto.ApplyParams{
+		Ops: []proto.Op{{
+			OpType:  proto.OpTypeCommand,
+			Command: &proto.CommandOp{},
+		}},
+	})
+	if !results[0].Failed {
+		t.Errorf("empty command not failed: %+v", results[0])
+	}
+	if results[0].Message == "" {
+		t.Errorf("empty command has no message: %+v", results[0])
+	}
+}
+
 func TestApplyCommandFailure(t *testing.T) {
 	conn := startAgent(t, Options{})
 	results := callApply(t, conn, proto.ApplyParams{

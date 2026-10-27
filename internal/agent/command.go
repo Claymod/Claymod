@@ -18,6 +18,12 @@ import (
 // The per-op timeout takes precedence over the run-level one.
 func (a *Agent) applyCommand(ctx context.Context, op proto.CommandOp, check bool, timeout time.Duration) proto.ApplyResult {
 	res := proto.ApplyResult{OpType: proto.OpTypeCommand}
+	if op.Shell == "" && len(op.Argv) == 0 {
+		// Guards against the Argv[0] panic in buildCommand/describe.
+		res.Failed = true
+		res.Message = "command requires shell or argv"
+		return res
+	}
 	if op.Timeout > 0 {
 		timeout = time.Duration(op.Timeout) * time.Millisecond
 	}
