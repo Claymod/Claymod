@@ -1,37 +1,44 @@
-# Claymod TLS simulation: certgen (PKI) -> agent (mTLS listener) -> control (probes).
+# Claymod enrollment simulation: real token -> HTTPS bootstrap -> enroll -> probe.
 #
-#   docker compose -f simulation/docker-compose.yml up --build --abort-on-container-exit
+#   docker compose -f simulation/docker-compose.yml up --build --exit-code-from control
 #
-# The `control` service runs simulation/probes.sh: positive + negative TLS
-# checks, and the whole stack's exit code is the verdict.
+# `control` runs claymod serve (HTTPS bootstrap, fake WG backend) and
+# issues a one-time token; `host` enrolls against it with the real
+# enrollment flow and runs the agent; `probes` drives the full positive +
+# negative TLS suite against the *enrolled* agent identity.
 name: claymod-sim
 
 services:
-  certgen:
+  control:
     build:
       context: ..
       dockerfile: simulation/Dockerfile
-    entrypoint: ["certgen"]
-    command:
-      - -out=/certs
-      - -agent-host=agent
-      - -listen=0.0.0.0:2323
+    entrypoint: ["sh", "/scripts/control-entry.sh"]
+    environment:
+      SERVER_NAME: "control"
+      HOSTNAME_FOR_TOKEN: "agent"
     volumes:
-      - certs:/certs
+      - shared:/shared
+      - ./scripts:/scripts:ro
 
   agent:
     build:
       context: ..
       dockerfile: simulation/Dockerfile
-    entrypoint: ["claymod"]
-    command: ["agent", "--config", "/certs/agent.yaml"]
+    entrypoint: ["sh", "/scripts/enroll-entry.sh"]
+    environment:
+      CONTROL_URL: "https://control:8443"
+      HOSTNAME_FOR_TOKEN: "agent"
+      CLAYMOD_SCHEMA_DIR: "/pkl"
     volumes:
-      - certs:/certs
+      - shared:/shared
+      - ./scripts:/scripts:ro
+      - ../pkl:/pkl:ro
     depends_on:
-      certgen:
-        condition: service_completed_successfully
+      control:
+        condition: service_started
 
-  control:
+  probes:
     build:
       context: ..
       dockerfile: simulation/Dockerfile
@@ -40,11 +47,14 @@ services:
       AGENT_ADDR: "agent:2323"
       SERVER_NAME: "agent"
     volumes:
-      - certs:/certs
+      - shared:/shared
       - ./scripts:/scripts:ro
+      - ../pkl:/pkl:ro
     depends_on:
       agent:
+        # service_started is enough: probes.sh waits for the fixtures and
+        # for the enrolled agent to accept connections (bounded).
         condition: service_started
 
 volumes:
-  certs:
+  shared:
