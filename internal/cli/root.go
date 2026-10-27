@@ -26,6 +26,7 @@ them to enrolled hosts over a WireGuard tunnel.`,
 		SilenceErrors: true,
 	}
 	root.AddCommand(newVersionCmd())
+	root.AddCommand(newAgentCmd())
 	return root
 }
 
