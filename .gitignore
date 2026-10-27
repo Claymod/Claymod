@@ -19,3 +19,6 @@ coverage.*
 
 # README quickstart demo artifacts
 /demo/
+
+# verify-readme demo artifacts
+/demo-verify/

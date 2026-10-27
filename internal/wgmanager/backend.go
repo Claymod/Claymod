@@ -1,9 +1,11 @@
-package wgmgr
+package wgmanager
 
 import (
 	"fmt"
 	"net"
 	"sync"
+
+	"github.com/claymod/claymod/internal/wgmgr"
 
 	"golang.zx2c4.com/wireguard/wgctrl"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
@@ -30,16 +32,16 @@ func parseAllowedIP(s string) (net.IP, net.IPNet, error) {
 // tracks peers exactly like a real interface would.
 type FakeBackend struct {
 	mu    sync.Mutex
-	peers map[string]Peer // keyed by public key
+	peers map[string]wgmgr.Peer // keyed by public key
 }
 
 // NewFakeBackend creates an empty fake.
 func NewFakeBackend() *FakeBackend {
-	return &FakeBackend{peers: map[string]Peer{}}
+	return &FakeBackend{peers: map[string]wgmgr.Peer{}}
 }
 
 // AddPeer implements Backend.
-func (f *FakeBackend) AddPeer(p Peer) error {
+func (f *FakeBackend) AddPeer(p wgmgr.Peer) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if p.PublicKey == "" {
@@ -61,10 +63,10 @@ func (f *FakeBackend) RemovePeer(publicKey string) error {
 }
 
 // Peers implements Backend.
-func (f *FakeBackend) Peers() ([]Peer, error) {
+func (f *FakeBackend) Peers() ([]wgmgr.Peer, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	out := make([]Peer, 0, len(f.peers))
+	out := make([]wgmgr.Peer, 0, len(f.peers))
 	for _, p := range f.peers {
 		out = append(out, p)
 	}
@@ -86,7 +88,7 @@ func NewWgctrlBackend(iface string) *WgctrlBackend {
 
 // AddPeer implements Backend: it merges the peer onto the device,
 // replacing only this peer's allowed IPs.
-func (w *WgctrlBackend) AddPeer(p Peer) error {
+func (w *WgctrlBackend) AddPeer(p wgmgr.Peer) error {
 	key, err := wgtypes.ParseKey(p.PublicKey)
 	if err != nil {
 		return fmt.Errorf("parse peer key: %w", err)
@@ -129,7 +131,7 @@ func (w *WgctrlBackend) RemovePeer(publicKey string) error {
 }
 
 // Peers implements Backend.
-func (w *WgctrlBackend) Peers() ([]Peer, error) {
+func (w *WgctrlBackend) Peers() ([]wgmgr.Peer, error) {
 	client, err := openWgctrl()
 	if err != nil {
 		return nil, err
@@ -139,13 +141,13 @@ func (w *WgctrlBackend) Peers() ([]Peer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("wgctrl: device %s: %w", w.Interface, err)
 	}
-	out := make([]Peer, 0, len(dev.Peers))
+	out := make([]wgmgr.Peer, 0, len(dev.Peers))
 	for _, p := range dev.Peers {
 		allowed := ""
 		if len(p.AllowedIPs) > 0 {
 			allowed = p.AllowedIPs[0].String()
 		}
-		out = append(out, Peer{
+		out = append(out, wgmgr.Peer{
 			Hostname:   "", // wgctrl cannot map hostnames; the inventory holds that
 			PublicKey:  p.PublicKey.String(),
 			AllowedIPs: allowed,

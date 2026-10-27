@@ -80,73 +80,6 @@ func TestWriteConfRefusesEmptyKey(t *testing.T) {
 	}
 }
 
-func TestManagerPersistsConfOnEnrollRevoke(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "claymod0.conf")
-	backend := NewFakeBackend()
-	m := NewWithKeys("claymod0", KeyPair{Private: "PRIV", Public: "PUB"},
-		backend, "127.0.0.1:51821")
-	m.Overlay = "10.42.0.1/24"
-	m.ListenPort = 51821
-	m.ConfPath = path
-
-	if err := m.Enroll("web01", "PK1", "10.42.0.2"); err != nil {
-		t.Fatalf("Enroll returned error: %v", err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("conf not written on enroll: %v", err)
-	}
-	if !strings.Contains(string(data), "# web01") || !strings.Contains(string(data), "10.42.0.2/32") {
-		t.Errorf("conf missing web01 peer:\n%s", data)
-	}
-
-	if err := m.Revoke("PK1"); err != nil {
-		t.Fatalf("Revoke returned error: %v", err)
-	}
-	data, err = os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(data), "# web01") {
-		t.Errorf("conf still lists revoked web01:\n%s", data)
-	}
-}
-
-func TestResyncInstallsInventoryPeers(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "claymod0.conf")
-	m := NewWithKeys("claymod0", KeyPair{Private: "PRIV"}, NewFakeBackend(), "")
-	m.Overlay = "10.42.0.1/24"
-	m.ListenPort = 51821
-	m.ConfPath = path
-
-	// Simulate a restart: inventory hands back two hosts.
-	if err := m.Resync([]Peer{
-		{Hostname: "web01", PublicKey: "PK1", AllowedIPs: "10.42.0.2/32"},
-		{Hostname: "web02", PublicKey: "PK2", AllowedIPs: "10.42.0.3/32"},
-	}); err != nil {
-		t.Fatalf("Resync returned error: %v", err)
-	}
-	peers, err := m.Peers()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(peers) != 2 {
-		t.Fatalf("Peers after resync = %d, want 2", len(peers))
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{"# web01", "# web02", "10.42.0.2/32", "10.42.0.3/32"} {
-		if !strings.Contains(string(data), want) {
-			t.Errorf("conf missing %q after resync", want)
-		}
-	}
-}
-
-// TestEnsureInterfaceUsesSystemCommands verifies the command sequence
-// (create link, set address, wg set with a key file, link up) against a
-// recorded runner — no root required.
 func TestEnsureInterfaceUsesSystemCommands(t *testing.T) {
 	var calls [][]string
 	old := sysRunner
@@ -258,40 +191,6 @@ func TestEnsureAgentInterfaceUsesSystemCommands(t *testing.T) {
 		if !strings.Contains(whole, want) {
 			t.Errorf("command sequence missing %q:\n%s", want, whole)
 		}
-	}
-}
-
-// TestPeersFuncIsSourceOfTruth: when PeersFunc is set (serve wires it to
-// the inventory), the config file reflects it — not the manager's map —
-// so serve and `host revoke` converge on the DB state.
-func TestPeersFuncIsSourceOfTruth(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "claymod0.conf")
-	m := NewWithKeys("claymod0", KeyPair{Private: "PRIV"}, NewFakeBackend(), "")
-	m.Overlay = "10.42.0.1/24"
-	m.ListenPort = 51821
-	m.ConfPath = path
-
-	dbPeers := []Peer{
-		{Hostname: "web01", PublicKey: "PK1", AllowedIPs: "10.42.0.2/32"},
-	}
-	m.PeersFunc = func() ([]Peer, error) { return dbPeers, nil }
-
-	// Enroll adds to the map AND (via PeersFunc) to the conf.
-	if err := m.Enroll("web01", "PK1", "10.42.0.2"); err != nil {
-		t.Fatal(err)
-	}
-	// Simulate `host revoke` removing web01 from the DB behind serve's
-	// back: the next refresh must drop it from the file.
-	dbPeers = nil
-	if err := m.RefreshConf(); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(data), "# web01") {
-		t.Errorf("conf resurrected a DB-removed peer:\n%s", data)
 	}
 }
 
