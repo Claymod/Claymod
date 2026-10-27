@@ -1,4 +1,4 @@
-package cli
+package agentcli
 
 import (
 	"encoding/json"
@@ -24,7 +24,7 @@ type wgSetup struct {
 	ServerPeer wgmgr.Peer `json:"server_peer"`
 }
 
-func newWGSetupCmd() *cobra.Command {
+func NewWGSetupCmd() *cobra.Command {
 	var (
 		outDir string
 	)

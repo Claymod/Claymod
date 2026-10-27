@@ -1,9 +1,9 @@
-package cli
+package agentcli
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
@@ -12,10 +12,10 @@ import (
 
 	"github.com/claymod/claymod/internal/agent"
 	"github.com/claymod/claymod/internal/config"
-	"github.com/claymod/claymod/internal/proto"
 )
 
-func newAgentCmd() *cobra.Command {
+// NewAgentCmd runs the claymod host agent.
+func NewAgentCmd() *cobra.Command {
 	var configPath string
 	cmd := &cobra.Command{
 		Use:   "agent",
@@ -37,46 +37,9 @@ func runAgent(ctx context.Context, configPath string) error {
 		return err
 	}
 	log := newLogger(cfg.LogLevel)
-
-	certPEM, err := os.ReadFile(cfg.CertFile)
-	if err != nil {
-		return fmt.Errorf("read agent cert: %w", err)
-	}
-	keyPEM, err := os.ReadFile(cfg.KeyFile)
-	if err != nil {
-		return fmt.Errorf("read agent key: %w", err)
-	}
-	id, err := proto.LoadIdentity(certPEM, keyPEM)
-	if err != nil {
-		return err
-	}
-	caPEM, err := os.ReadFile(cfg.ServerCAFile)
-	if err != nil {
-		return fmt.Errorf("read server CA: %w", err)
-	}
-	clientPool, err := proto.CertPoolFromPEM(caPEM)
-	if err != nil {
-		return err
-	}
-
-	ln, err := proto.Listen(cfg.Listen, id, clientPool)
-	if err != nil {
-		return err
-	}
-	log.Info("agent listening", "addr", cfg.Listen)
-
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-
-	a := agent.New(agent.Options{
-		Logger:    log,
-		OpTimeout: cfg.OpTimeout,
-	})
-	if err := a.Serve(ctx, ln); err != nil {
-		return err
-	}
-	log.Info("agent stopped")
-	return nil
+	return agent.RunFromConfig(ctx, cfg, log)
 }
 
 func newLogger(level string) *slog.Logger {
@@ -92,4 +55,16 @@ func newLogger(level string) *slog.Logger {
 		lvl = slog.LevelInfo
 	}
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: lvl}))
+}
+
+// overlayPrefixLen returns the prefix length of a CIDR string (default
+// 24 when unparsable). Duplicated from the server CLI so this package
+// stays free of server-side imports.
+func overlayPrefixLen(cidr string) int {
+	_, p, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return 24
+	}
+	ones, _ := p.Mask.Size()
+	return ones
 }

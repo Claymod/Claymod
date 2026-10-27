@@ -20,9 +20,10 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/claymod/claymod/internal/config"
-	"github.com/claymod/claymod/internal/enroll"
+	"github.com/claymod/claymod/internal/enrollserver"
 	"github.com/claymod/claymod/internal/inventory"
 	"github.com/claymod/claymod/internal/state"
+	"github.com/claymod/claymod/internal/wgmanager"
 	"github.com/claymod/claymod/internal/wgmgr"
 )
 
@@ -35,6 +36,7 @@ func newServeCmd() *cobra.Command {
 		wgInterface     string
 		wgEndpoint      string
 		wgListenPort    int
+		agentBinDir     string
 		manageInterface bool
 		wgBackendMode   string
 		serverName      string
@@ -68,6 +70,7 @@ over the WireGuard overlay.`,
 	cmd.Flags().StringVar(&wgInterface, "wg-interface", "claymod0", "WireGuard interface name (peers are managed on it)")
 	cmd.Flags().StringVar(&wgEndpoint, "wg-endpoint", "127.0.0.1:51821", "WireGuard endpoint agents connect to (host:port)")
 	cmd.Flags().IntVar(&wgListenPort, "wg-port", 51821, "WireGuard UDP listen port (written to the generated config)")
+	cmd.Flags().StringVar(&agentBinDir, "agent-bin-dir", "", "directory of claymod-agent binaries to serve at /agent/{goos}/{goarch} (default: <data-dir>/agents)")
 	cmd.Flags().BoolVar(&manageInterface, "manage-interface", false, "create/refresh the WireGuard interface (needs CAP_NET_ADMIN; peers via wgctrl)")
 	cmd.Flags().StringVar(&wgBackendMode, "wg-backend", "wgctrl", "WireGuard backend: wgctrl (real, needs root) or fake (testing)")
 	cmd.Flags().StringVar(&serverName, "server-name", "claymod", "CN/SAN on the bootstrap server certificate (agents pin it)")
@@ -80,6 +83,7 @@ type serveOptions struct {
 	agentNetwork    string
 	bootstrapAddr   string
 	wgListenPort    int
+	agentBinDir     string
 	manageInterface bool
 	wgInterface     string
 	wgEndpoint      string
@@ -110,17 +114,17 @@ func runServe(ctx context.Context, cmd *cobra.Command, o serveOptions) error {
 	}
 	defer inv.Close()
 
-	var backend wgmgr.Backend
+	var backend wgmanager.Backend
 	switch o.wgBackendMode {
 	case "fake":
-		backend = wgmgr.NewFakeBackend()
+		backend = wgmanager.NewFakeBackend()
 		log.Warn("using fake wireguard backend (peers are not installed on a real interface)")
 	case "wgctrl", "":
-		backend = wgmgr.NewWgctrlBackend(o.wgInterface)
+		backend = wgmanager.NewWgctrlBackend(o.wgInterface)
 	default:
 		return fmt.Errorf("unknown wireguard backend %q (want wgctrl or fake)", o.wgBackendMode)
 	}
-	wgMgr := wgmgr.NewWithKeys(o.wgInterface, st.WGKeys, backend, o.wgEndpoint)
+	wgMgr := wgmanager.NewWithKeys(o.wgInterface, st.WGKeys, backend, o.wgEndpoint)
 	wgMgr.Overlay = inv.ServerIP() + "/" + strconv.Itoa(overlayPrefixLen(cfg.AgentNetwork))
 	wgMgr.ListenPort = o.wgListenPort
 	wgMgr.ConfPath = wgmgr.ConfPath(cfg.DataDir, o.wgInterface)
@@ -151,7 +155,21 @@ func runServe(ctx context.Context, cmd *cobra.Command, o serveOptions) error {
 		log.Info("wireguard interface is operator-managed (apply the generated config with wg-quick / wg syncconf)")
 	}
 
-	enrollSrv := enroll.NewServer(inv, st.CA, wgMgr, log)
+	agentDir := o.agentBinDir
+	if agentDir == "" {
+		agentDir = filepath.Join(cfg.DataDir, "agents")
+	}
+	enrollSrv := enrollserver.NewServer(inv, st.CA, wgMgr, log)
+	enrollSrv.AgentBinDir = agentDir
+	if digests, err := enrollserver.AgentDigests(agentDir); err == nil && len(digests) > 0 {
+		log.Info("agent binaries offered for download", "dir", agentDir)
+		for _, d := range digests {
+			cmd.Printf("agent binary %s\n", d)
+		}
+	} else {
+		log.Info("no agent binaries to serve (place them in the dir to offer them during bootstrap)",
+			"dir", agentDir)
+	}
 	mux := enrollSrv.Handler()
 
 	srv := &http.Server{
@@ -244,7 +262,9 @@ func newHostTokenCmd() *cobra.Command {
 			}
 			out := cmd.OutOrStdout()
 			fmt.Fprintf(out, "enrollment token for %s (valid %s):\n  %s\n", args[0], ttl, token)
-			fmt.Fprintf(out, "on the host, run:\n  claymod enroll --server https://<control-host>:8443 --token %s --hostname %s --ca-pin <sha256-of-bootstrap-cert>\n", token, args[0])
+			fmt.Fprintf(out, "on the host, download the agent and enroll:\n")
+			fmt.Fprintf(out, "  curl --cacert ca.pem -o claymod-agent https://<control-host>:8443/agent/$(go env GOOS 2>/dev/null || uname -s | tr A-Z a-z)/$(go env GOARCH 2>/dev/null || uname -m | sed s/x86_64/amd64/) && chmod +x claymod-agent\n")
+			fmt.Fprintf(out, "  ./claymod-agent enroll --server https://<control-host>:8443 --token %s --hostname %s --ca-pin <sha256-of-bootstrap-cert>\n", token, args[0])
 			if tokenFile != "" {
 				if err := os.WriteFile(tokenFile, []byte(token+"\n"), 0o600); err != nil {
 					return fmt.Errorf("write token file: %w", err)
@@ -340,21 +360,21 @@ func newHostRevokeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			var backend wgmgr.Backend
+			var backend wgmanager.Backend
 			switch wgBackendMode {
 			case "fake":
-				backend = wgmgr.NewFakeBackend()
+				backend = wgmanager.NewFakeBackend()
 			case "wgctrl", "":
-				backend = wgmgr.NewWgctrlBackend(wgInterface)
+				backend = wgmanager.NewWgctrlBackend(wgInterface)
 			default:
 				return fmt.Errorf("unknown wireguard backend %q (want wgctrl or fake)", wgBackendMode)
 			}
-			wgMgr := wgmgr.NewWithKeys(wgInterface, st.WGKeys, backend, "")
+			wgMgr := wgmanager.NewWithKeys(wgInterface, st.WGKeys, backend, "")
 			wgMgr.ConfPath = wgmgr.ConfPath(cfg.DataDir, wgInterface)
 			wgMgr.PeersFunc = func() ([]wgmgr.Peer, error) {
 				return inventoryPeers(inv)
 			}
-			enrollSrv := enroll.NewServer(inv, st.CA, wgMgr, newLogger(cfg.LogLevel))
+			enrollSrv := enrollserver.NewServer(inv, st.CA, wgMgr, newLogger(cfg.LogLevel))
 
 			if err := enrollSrv.Revoke(args[0]); err != nil {
 				return err

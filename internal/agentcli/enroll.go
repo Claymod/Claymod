@@ -1,4 +1,4 @@
-package cli
+package agentcli
 
 import (
 	"crypto/sha256"
@@ -20,7 +20,7 @@ import (
 	"github.com/claymod/claymod/internal/wgmgr"
 )
 
-func newEnrollCmd() *cobra.Command {
+func NewEnrollCmd() *cobra.Command {
 	var (
 		serverURL string
 		token     string

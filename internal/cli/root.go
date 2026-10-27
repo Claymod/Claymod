@@ -5,6 +5,8 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+
+	"github.com/claymod/claymod/internal/agentcli"
 )
 
 // version is stamped by the build via -ldflags (see Makefile).
@@ -26,14 +28,14 @@ them to enrolled hosts over a WireGuard tunnel.`,
 		SilenceErrors: true,
 	}
 	root.AddCommand(newVersionCmd())
-	root.AddCommand(newAgentCmd())
+	root.AddCommand(agentcli.NewAgentCmd())
 	root.AddCommand(newProbeCmd())
 	root.AddCommand(newPlaybookCmd())
 	root.AddCommand(newServeCmd())
-	root.AddCommand(newEnrollCmd())
+	root.AddCommand(agentcli.NewEnrollCmd())
 	root.AddCommand(newHostCmd())
 	root.AddCommand(newExecCmd())
-	root.AddCommand(newWGSetupCmd())
+	root.AddCommand(agentcli.NewWGSetupCmd())
 	return root
 }
 
