@@ -5,6 +5,31 @@ playbooks into primitive ops and pushes them to **agents** over a
 WireGuard overlay secured with mutual TLS. This document describes the
 components, data flow and trust model.
 
+## Binaries
+
+The tool ships as **two binaries**, one per side of the wire:
+
+- **`claymod`** (control server + full CLI) — links everything: sqlite
+  inventory, the PKL pipeline, the CA and wgctrl. Runs on the operator's
+  side; needs the `pkl` CLI on PATH.
+- **`claymod-agent`** (host) — a small static binary linking only the
+  light closure: `agent` (apply engine), `proto` (framed mTLS), the
+  `enroll` *client* contract, `wgmgr` (keygen + interface bring-up) and
+  `config`. No database, no PKL, no wgctrl. ~7 MB vs ~14 MB.
+
+The split is enforced by package layout: heavy control-side code lives
+in `internal/inventory`, `internal/playbook`, `internal/modules`,
+`internal/enrollserver` and `internal/wgmanager`; the shared light code
+is `internal/agent`, `internal/proto`, `internal/enroll`,
+`internal/wgmgr`, `internal/agentcli`. `go list -deps ./cmd/claymod-agent`
+contains no inventory/playbook/wgctrl packages.
+
+Air-gapped hosts fetch their agent from the control server itself:
+`GET /agent/{goos}/{goarch}` (+ `.sha256`) on the pinned HTTPS bootstrap
+endpoint serves binaries placed in `--agent-bin-dir`. Integrity is
+by checksum — the digest is logged at startup and served alongside the
+binary for comparison on the host.
+
 ## Components
 
 | Component | Package | Role |

@@ -90,6 +90,18 @@ revoke on any host decommission, and treat `claymod-data/` backups as
 key material. Planned hardening (Phase 9+): connection limits,
 reconnection with bounded retries, graceful shutdown.
 
+## Agent binary distribution
+
+The host agent is a **separate small static binary** (`claymod-agent`,
+~7 MB) with a light dependency closure (no database, no PKL tooling, no
+wgctrl). It can be served by the control server itself
+(`GET /agent/{goos}/{goarch}` on the pinned bootstrap channel) for
+air-gapped hosts. The binary carries no secrets; integrity comes from
+SHA-256 digests — logged by `serve` at startup and served as a `.sha256`
+sidecar for comparison on the host. Pinning the channel (CA bundle /
+fingerprint) is what authenticates the download; the digest guards
+against a corrupted or swapped file.
+
 ## Dependency footprint
 
 Four Go dependencies (cobra, yaml.v3, modernc.org/sqlite — pure-Go

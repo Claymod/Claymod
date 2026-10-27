@@ -34,21 +34,57 @@ TLS. Small dependency footprint, one static binary.
 
 ## Install
 
+Two binaries, one per side of the wire:
+
+| Binary | Role | Size | Links |
+|---|---|---|---|
+| `claymod` | control server + full CLI | ~14 MB | sqlite, pkl, wgctrl |
+| `claymod-agent` | host agent (static) | ~7 MB | stdlib + yaml only |
+
 ```sh
-make build          # produces ./bin/claymod
+make build          # bin/claymod (control) + bin/claymod-agent (host)
+make agents         # cross-compiled agents in bin/agents/ + sha256 sums
 go test ./...       # run the test suite (pkl-dependent tests auto-skip
                     # without the pkl CLI; run scripts/bootstrap-pkl.sh
                     # first for full coverage)
 ```
 
 The control server needs the `pkl` CLI on its PATH
-(`scripts/bootstrap-pkl.sh` installs it locally). Agents need nothing
-but the binary.
+(`scripts/bootstrap-pkl.sh` installs it locally). Hosts need only the
+**agent** binary — a small static build (`CGO_ENABLED=0`) that links no
+database, no PKL tooling and no wgctrl.
+
+### Air-gapped hosts
+
+`claymod serve` can offer agent binaries for download over its pinned
+HTTPS bootstrap endpoint:
+
+```sh
+make agents                      # bin/agents/claymod-agent-<goos>-<goarch>
+claymod serve --agent-bin-dir bin/agents ...
+```
+
+On the host, with only `curl` and the pinned CA bundle (or the server's
+certificate fingerprint) in hand:
+
+```sh
+curl --cacert ca.pem -o claymod-agent \
+  https://control:8443/agent/linux/amd64
+curl --cacert ca.pem https://control:8443/agent/linux/amd64.sha256
+shasum -a 256 claymod-agent        # compare with the digest above
+chmod +x claymod-agent
+./claymod-agent enroll --server https://control:8443 --token ... --hostname ...
+```
+
+The digest is also printed by `claymod serve` at startup for
+out-of-band verification. Nothing else needs to reach the host: the
+entire bootstrap path is the one pinned TLS channel.
 
 ## Quickstart (loopback, ~2 minutes)
 
 Everything below runs on one machine against loopback — no root, no
-WireGuard interface — and exercises the real enrollment flow. It is
+WireGuard interface — and exercises the real enrollment flow with the
+**agent binary** (the same one served to air-gapped hosts). It is
 copy-paste verbatim: every command below has been run exactly as
 printed.
 
@@ -103,14 +139,16 @@ bin/claymod serve --data-dir demo --agent-network 127.0.0.0/8 \
 # 3. In a second shell: issue a one-time token for host "web01".
 bin/claymod host token web01 --data-dir demo --token-file demo/token
 
-# 4. Enroll the host (pinned to the CA the server just created).
-bin/claymod enroll --server https://localhost:8443 \
+# 4. Enroll the host with the agent binary (pinned to the CA the server
+#    just created). In an air-gapped setup this binary comes from
+#    https://localhost:8443/agent/<goos>/<goarch> instead of ./bin.
+bin/claymod-agent enroll --server https://localhost:8443 \
   --token "$(cat demo/token)" --hostname web01 \
   --ca demo/ca/ca.pem --out-dir demo/host --listen 127.0.0.1:2323 \
   --skip-wg-config
 
 # 5. Start the agent on the enrolled identity.
-bin/claymod agent --config demo/host/agent.yaml
+bin/claymod-agent agent --config demo/host/agent.yaml
 ```
 
 In a third shell, apply the playbook (the agent listens on

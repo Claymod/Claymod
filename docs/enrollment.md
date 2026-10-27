@@ -66,6 +66,32 @@ openssl s_client -connect claymod.internal:8443 -servername claymod.internal </d
 | `agent.yaml` | agent configuration | 0644 |
 | `wg-keys.json` | WireGuard key pair (generated locally) | 0600 |
 
+### Air-gapped bootstrap: the agent binary comes from the server
+
+Hosts need only `curl` and the pinned CA bundle (or the server cert
+fingerprint). Everything else flows over the one pinned TLS channel:
+
+```sh
+# on the host, with ca.pem in hand:
+curl --cacert ca.pem -o claymod-agent \
+  https://control:8443/agent/linux/amd64
+curl --cacert ca.pem https://control:8443/agent/linux/amd64.sha256
+shasum -a 256 claymod-agent     # compare with the served digest
+chmod +x claymod-agent
+```
+
+`claymod serve --agent-bin-dir` (default `<data-dir>/agents`) exposes
+binaries placed there (`make agents` cross-compiles the matrix and
+prints sha256 sums). `serve` logs each digest at startup — verify
+against that channel out-of-band. Then enroll and run as usual:
+
+```sh
+./claymod-agent enroll --server https://control:8443 --token ... \
+  --hostname web01 --ca ca.pem --out-dir /etc/claymod
+sudo ./claymod-agent wg-setup          # WireGuard bring-up (root step)
+sudo ./claymod-agent agent --config /etc/claymod/agent.yaml
+```
+
 ## 4. Start the agent
 
 ```sh
