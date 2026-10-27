@@ -13,3 +13,7 @@ coverage.*
 
 # pkl CLI bootstrap output
 /scripts/.pkl-cache/
+
+# TLS simulation artifacts
+/simulation/.certs-local/
+/simulation/.bin/

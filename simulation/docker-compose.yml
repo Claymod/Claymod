@@ -1,0 +1,50 @@
+# Claymod TLS simulation: certgen (PKI) -> agent (mTLS listener) -> control (probes).
+#
+#   docker compose -f simulation/docker-compose.yml up --build --abort-on-container-exit
+#
+# The `control` service runs simulation/probes.sh: positive + negative TLS
+# checks, and the whole stack's exit code is the verdict.
+name: claymod-sim
+
+services:
+  certgen:
+    build:
+      context: ..
+      dockerfile: simulation/Dockerfile
+    entrypoint: ["certgen"]
+    command:
+      - -out=/certs
+      - -agent-host=agent
+      - -listen=0.0.0.0:2323
+    volumes:
+      - certs:/certs
+
+  agent:
+    build:
+      context: ..
+      dockerfile: simulation/Dockerfile
+    entrypoint: ["claymod"]
+    command: ["agent", "--config", "/certs/agent.yaml"]
+    volumes:
+      - certs:/certs
+    depends_on:
+      certgen:
+        condition: service_completed_successfully
+
+  control:
+    build:
+      context: ..
+      dockerfile: simulation/Dockerfile
+    entrypoint: ["sh", "/scripts/probes.sh"]
+    environment:
+      AGENT_ADDR: "agent:2323"
+      SERVER_NAME: "agent"
+    volumes:
+      - certs:/certs
+      - ./scripts:/scripts:ro
+    depends_on:
+      agent:
+        condition: service_started
+
+volumes:
+  certs:
