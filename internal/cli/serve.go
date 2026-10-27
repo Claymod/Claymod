@@ -28,6 +28,7 @@ func newServeCmd() *cobra.Command {
 	var (
 		configPath    string
 		dataDir       string
+		agentNetwork  string
 		bootstrapAddr string
 		wgInterface   string
 		wgEndpoint    string
@@ -45,6 +46,7 @@ over the WireGuard overlay.`,
 			return runServe(cmd.Context(), cmd, serveOptions{
 				configPath:    configPath,
 				dataDir:       dataDir,
+				agentNetwork:  agentNetwork,
 				bootstrapAddr: bootstrapAddr,
 				wgInterface:   wgInterface,
 				wgEndpoint:    wgEndpoint,
@@ -55,6 +57,7 @@ over the WireGuard overlay.`,
 	}
 	cmd.Flags().StringVarP(&configPath, "config", "c", "", "path to server.yaml (default values if omitted)")
 	cmd.Flags().StringVar(&dataDir, "data-dir", "claymod-data", "server data directory (CA, identities, inventory)")
+	cmd.Flags().StringVar(&agentNetwork, "agent-network", "10.42.0.0/24", "agent overlay CIDR (IPAM allocations)")
 	cmd.Flags().StringVar(&bootstrapAddr, "bootstrap-listen", ":8443", "HTTPS enrollment listen address")
 	cmd.Flags().StringVar(&wgInterface, "wg-interface", "claymod0", "WireGuard interface name (peers are managed on it)")
 	cmd.Flags().StringVar(&wgEndpoint, "wg-endpoint", "127.0.0.1:51820", "WireGuard endpoint agents connect to (host:port)")
@@ -66,6 +69,7 @@ over the WireGuard overlay.`,
 type serveOptions struct {
 	configPath    string
 	dataDir       string
+	agentNetwork  string
 	bootstrapAddr string
 	wgInterface   string
 	wgEndpoint    string
@@ -80,6 +84,9 @@ func runServe(ctx context.Context, cmd *cobra.Command, o serveOptions) error {
 	}
 	if o.dataDir != "" {
 		cfg.DataDir = o.dataDir
+	}
+	if o.agentNetwork != "" {
+		cfg.AgentNetwork = o.agentNetwork
 	}
 	log := newLogger(cfg.LogLevel)
 
