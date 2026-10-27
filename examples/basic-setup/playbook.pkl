@@ -1,0 +1,33 @@
+// Basic setup playbook: writes a message of the day, renders an app
+// config and ensures the log directory exists.
+amends "modulepath:/claymod/base.pkl"
+import "modulepath:/claymod/std/files.pkl"
+
+hosts {
+  "web01"
+}
+
+vars {
+  ["environment"] = "production"
+}
+
+resources {
+  new files.Copy {
+    name = "motd"
+    source = "files/motd.txt"
+    dest = "/etc/motd"
+    mode = "0644"
+  }
+  new files.Template {
+    name = "app.conf"
+    source = "templates/app.conf.tmpl"
+    dest = "/etc/app.conf"
+    mode = "0640"
+    vars { ["port"] = "8080" }
+  }
+  new files.Directory {
+    name = "logdir"
+    path = "/var/log/myapp"
+    mode = "0750"
+  }
+}

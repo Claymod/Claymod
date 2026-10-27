@@ -1,0 +1,28 @@
+// Nginx setup: config template, then service start, with dependencies.
+amends "modulepath:/claymod/base.pkl"
+import "modulepath:/claymod/std/files.pkl"
+import "modulepath:/claymod/std/service.pkl"
+
+hosts {
+  "web01"
+}
+
+vars {
+  ["domain"] = "example.internal"
+}
+
+resources {
+  new files.Template {
+    name = "nginx.conf"
+    source = "templates/nginx.conf.tmpl"
+    dest = "/etc/nginx/nginx.conf"
+    mode = "0644"
+  }
+  new service.Unit {
+    name = "nginx"
+    unit = "nginx"
+    state = "started"
+    enabled = true
+    dependsOn { "nginx.conf" }
+  }
+}
