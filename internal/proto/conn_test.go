@@ -2,6 +2,7 @@ package proto
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"io"
@@ -30,9 +31,9 @@ func unmarshalParams(raw json.RawMessage, v any) error {
 	return json.Unmarshal(raw, v)
 }
 
-// testPair spins up an in-memory mutual-TLS connection pair using certs
-// from a throwaway CA, and completes the handshake on both sides.
-func testPair(t *testing.T) (client, server *Conn) {
+// makeTestCA creates a throwaway CA and issues a server identity
+// (CN=claymod-server, SAN=claymod.test) and a client identity (CN=web01).
+func makeTestCA(t *testing.T) (authority *ca.CA, serverID, clientID Identity, pool *x509.CertPool) {
 	t.Helper()
 	authority, err := ca.New("proto-test-ca")
 	if err != nil {
@@ -53,15 +54,45 @@ func testPair(t *testing.T) (client, server *Conn) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	serverID, err := LoadIdentity(serverPEM, serverKey)
+	serverID, err = LoadIdentity(serverPEM, serverKey)
 	if err != nil {
 		t.Fatal(err)
 	}
-	clientID, err := LoadIdentity(clientPEM, clientKey)
+	clientID, err = LoadIdentity(clientPEM, clientKey)
 	if err != nil {
 		t.Fatal(err)
 	}
-	pool := authority.Pool()
+	pool = authority.Pool()
+	return authority, serverID, clientID, pool
+}
+
+// dialTestTLS opens a raw TLS client connection (completing the TLS
+// handshake only) to addr.
+func dialTestTLS(t *testing.T, addr string, clientID Identity, pool *x509.CertPool) (*tls.Conn, error) {
+	t.Helper()
+	cfg := &tls.Config{
+		Certificates: []tls.Certificate{clientID.Certificate},
+		RootCAs:      pool,
+		ServerName:   "claymod.test",
+		MinVersion:   tls.VersionTLS13,
+	}
+	raw, err := net.Dial("tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+	tconn := tls.Client(raw, cfg)
+	if err := tconn.Handshake(); err != nil {
+		raw.Close()
+		return nil, err
+	}
+	return tconn, nil
+}
+
+// testPair spins up an in-memory mutual-TLS connection pair using certs
+// from a throwaway CA, and completes the handshake on both sides.
+func testPair(t *testing.T) (client, server *Conn) {
+	t.Helper()
+	_, serverID, clientID, pool := makeTestCA(t)
 
 	ln, err := Listen("127.0.0.1:0", serverID, pool)
 	if err != nil {

@@ -170,44 +170,68 @@ func (c *Conn) Close() error { return c.tls.Close() }
 // RemoteAddr returns the remote network address.
 func (c *Conn) RemoteAddr() net.Addr { return c.tls.RemoteAddr() }
 
+// clientHandshake sends the client handshake and reads the peer's
+// response. Both frames travel under the handshake deadline (not the
+// per-frame timeout), so a stalled peer cannot hold the handshake open.
 func (c *Conn) clientHandshake() error {
-	hs := Handshake{Version: Version, Role: RoleServer}
-	if err := c.Send(hs); err != nil {
-		return fmt.Errorf("proto: send handshake: %w", err)
-	}
 	if err := c.setHandshakeDeadline(); err != nil {
 		return err
 	}
-	var peer Handshake
-	if err := c.Recv(&peer); err != nil {
+	if err := c.sendHandshake(Handshake{Version: Version, Role: RoleServer}); err != nil {
+		return fmt.Errorf("proto: send handshake: %w", err)
+	}
+	peer, err := c.recvHandshake()
+	if err != nil {
 		return fmt.Errorf("proto: read handshake: %w", err)
 	}
 	return c.checkPeer(peer)
 }
 
+// serverHandshake reads the client's handshake and answers it. Both frames
+// travel under the handshake deadline.
 func (c *Conn) serverHandshake() error {
-	hs := Handshake{Version: Version, Role: RoleAgent}
 	if err := c.setHandshakeDeadline(); err != nil {
 		return err
 	}
-	var peer Handshake
-	if err := c.Recv(&peer); err != nil {
+	peer, err := c.recvHandshake()
+	if err != nil {
 		return fmt.Errorf("proto: read handshake: %w", err)
 	}
 	if err := c.checkPeer(peer); err != nil {
 		return err
 	}
-	if err := c.Send(hs); err != nil {
+	if err := c.sendHandshake(Handshake{Version: Version, Role: RoleAgent}); err != nil {
 		return fmt.Errorf("proto: send handshake: %w", err)
 	}
 	return nil
 }
 
-func (c *Conn) setHandshakeDeadline() error {
-	if err := c.tls.SetDeadline(time.Now().Add(defaultHandshakeFrame)); err != nil {
-		return err
+// sendHandshake writes one handshake frame using raw frame I/O; the
+// deadline was set by setHandshakeDeadline and is not reset here.
+func (c *Conn) sendHandshake(hs Handshake) error {
+	payload, err := json.Marshal(hs)
+	if err != nil {
+		return fmt.Errorf("proto: marshal handshake: %w", err)
 	}
-	return nil
+	return writeFrame(c.tls, payload)
+}
+
+// recvHandshake reads one handshake frame using raw frame I/O; the
+// deadline was set by setHandshakeDeadline and is not reset here.
+func (c *Conn) recvHandshake() (Handshake, error) {
+	payload, err := readFrame(c.tls)
+	if err != nil {
+		return Handshake{}, err
+	}
+	var hs Handshake
+	if err := json.Unmarshal(payload, &hs); err != nil {
+		return Handshake{}, fmt.Errorf("proto: unmarshal handshake: %w", err)
+	}
+	return hs, nil
+}
+
+func (c *Conn) setHandshakeDeadline() error {
+	return c.tls.SetDeadline(time.Now().Add(defaultHandshakeFrame))
 }
 
 func (c *Conn) checkPeer(peer Handshake) error {
@@ -257,16 +281,21 @@ func CertPoolFromPEM(pemBytes []byte) (*x509.CertPool, error) {
 	return pool, nil
 }
 
-// PeerCommonName returns the verified CN of the remote client certificate,
-// or "" for non-TLS connections. Agents use it to authorize the caller.
-func PeerCommonName(raw net.Conn) string {
+// PeerCommonName returns the verified CN of the remote client certificate.
+// It completes the (lazy) TLS handshake first, so it is safe on a freshly
+// accepted connection that has not done I/O yet. Agents use it to
+// authorize the caller. It returns an error for non-TLS connections and
+// for peers without a verified certificate.
+func PeerCommonName(raw net.Conn) (string, error) {
 	tconn, ok := raw.(*tls.Conn)
 	if !ok {
-		return ""
+		return "", errors.New("proto: not a TLS connection")
 	}
-	state := tconn.ConnectionState()
-	for _, chain := range state.PeerCertificates {
-		return chain.Subject.CommonName
+	if err := tconn.Handshake(); err != nil {
+		return "", fmt.Errorf("proto: tls handshake: %w", err)
 	}
-	return ""
+	for _, cert := range tconn.ConnectionState().PeerCertificates {
+		return cert.Subject.CommonName, nil
+	}
+	return "", errors.New("proto: no verified peer certificate")
 }
