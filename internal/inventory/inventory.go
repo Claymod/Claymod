@@ -18,6 +18,7 @@ var (
 	ErrNotFound      = errors.New("host not found")
 	ErrHostExists    = errors.New("host already exists")
 	ErrIPInUse       = errors.New("ip already allocated")
+	ErrIPReserved    = errors.New("ip is reserved for the control server")
 	ErrIPOutOfRange  = errors.New("ip outside agent network")
 	ErrIPExhausted   = errors.New("no free ip in agent network")
 	ErrTokenNotFound = errors.New("token not found")
@@ -75,6 +76,22 @@ func Open(path, agentNetwork string) (*Inventory, error) {
 // Close releases the database handle.
 func (inv *Inventory) Close() error {
 	return inv.db.Close()
+}
+
+// Overlay returns the agent network CIDR the inventory allocates from.
+func (inv *Inventory) Overlay() string {
+	return inv.ipam.network.String()
+}
+
+// ServerIP returns the overlay address reserved for the control server
+// (network base + 1). It is never allocated to a host.
+func (inv *Inventory) ServerIP() string {
+	return inv.ipam.serverAddr().String()
+}
+
+// IsServerIP reports whether ip is the reserved control-server address.
+func (inv *Inventory) IsServerIP(ip string) bool {
+	return inv.ipam.isServerAddr(ip)
 }
 
 func (inv *Inventory) createTables() error {
@@ -139,6 +156,9 @@ func (inv *Inventory) AddHost(h *Host) error {
 		}
 		ip = allocated
 	} else {
+		if inv.ipam.isServerAddr(ip) {
+			return fmt.Errorf("%w: %s", ErrIPReserved, ip)
+		}
 		if !inv.ipam.inRange(ip) {
 			return fmt.Errorf("%w: %s", ErrIPOutOfRange, ip)
 		}

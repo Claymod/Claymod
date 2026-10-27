@@ -33,8 +33,9 @@ func TestEnrollHostHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EnrollHost returned error: %v", err)
 	}
-	if h.WGIP != "10.42.0.1" {
-		t.Errorf("WGIP = %q, want 10.42.0.1", h.WGIP)
+	// .1 is reserved for the control server: hosts start at .2.
+	if h.WGIP != "10.42.0.2" {
+		t.Errorf("WGIP = %q, want 10.42.0.2 (.1 is the server's)", h.WGIP)
 	}
 	if h.PublicKey != "pk-abc" || h.CertPEM != "pem-abc" {
 		t.Errorf("host = %+v", h)
@@ -45,7 +46,7 @@ func TestEnrollHostHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.WGIP != "10.42.0.1" {
+	if got.WGIP != "10.42.0.2" {
 		t.Errorf("stored WGIP = %q", got.WGIP)
 	}
 	if _, err := inv.ValidateToken("tok1"); !errors.Is(err, ErrTokenUsed) {
@@ -134,8 +135,44 @@ func TestEnrollAllocatesNextIP(t *testing.T) {
 	if h1.WGIP == h2.WGIP {
 		t.Errorf("both hosts got %q", h1.WGIP)
 	}
-	if h2.WGIP != "10.42.0.2" {
-		t.Errorf("second WGIP = %q, want 10.42.0.2", h2.WGIP)
+	if h1.WGIP != "10.42.0.2" {
+		t.Errorf("first WGIP = %q, want 10.42.0.2 (.1 is the server's)", h1.WGIP)
+	}
+	if h2.WGIP != "10.42.0.3" {
+		t.Errorf("second WGIP = %q, want 10.42.0.3", h2.WGIP)
+	}
+}
+
+func TestServerAddressIsReserved(t *testing.T) {
+	inv := enrollTestInv(t)
+	if inv.ServerIP() != "10.42.0.1" {
+		t.Errorf("ServerIP = %q, want 10.42.0.1", inv.ServerIP())
+	}
+	// An explicit request for the server address is refused clearly.
+	err := inv.AddHost(&Host{Hostname: "sneaky", WGIP: inv.ServerIP()})
+	if !errors.Is(err, ErrIPReserved) {
+		t.Fatalf("AddHost with the server IP error = %v, want ErrIPReserved", err)
+	}
+}
+
+func TestLoopbackNetworkHasNoReservation(t *testing.T) {
+	// Loopback dev networks share 127.0.0.1 for server and hosts (other
+	// 127.x addresses are not dialable on macOS): no reservation there.
+	path := filepath.Join(t.TempDir(), "inv.db")
+	inv, err := Open(path, "127.0.0.0/8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inv.Close()
+	h := &Host{Hostname: "web01"}
+	if err := inv.AddHost(h); err != nil {
+		t.Fatal(err)
+	}
+	if h.WGIP != "127.0.0.1" {
+		t.Errorf("WGIP = %q, want 127.0.0.1 (no reservation on loopback)", h.WGIP)
+	}
+	if inv.IsServerIP(h.WGIP) {
+		t.Error("IsServerIP true on a loopback network")
 	}
 }
 

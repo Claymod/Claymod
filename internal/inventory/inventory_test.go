@@ -26,8 +26,9 @@ func TestAddHostAllocatesFirstIP(t *testing.T) {
 	if err := inv.AddHost(h); err != nil {
 		t.Fatalf("AddHost returned error: %v", err)
 	}
-	if h.WGIP != "10.42.0.1" {
-		t.Errorf("WGIP = %q, want 10.42.0.1", h.WGIP)
+	// .1 is reserved for the control server; hosts start at .2.
+	if h.WGIP != "10.42.0.2" {
+		t.Errorf("WGIP = %q, want 10.42.0.2", h.WGIP)
 	}
 }
 
@@ -69,7 +70,7 @@ func TestIPReuseAfterRevoke(t *testing.T) {
 	if err := inv.AddHost(&Host{Hostname: "web02"}); err != nil {
 		t.Fatal(err)
 	}
-	// Revoke web01 (frees .1), then web03 must reuse it.
+	// Revoke web01 (frees .2), then web03 must reuse it.
 	if err := inv.RemoveHost("web01"); err != nil {
 		t.Fatalf("RemoveHost returned error: %v", err)
 	}
@@ -77,8 +78,8 @@ func TestIPReuseAfterRevoke(t *testing.T) {
 	if err := inv.AddHost(h3); err != nil {
 		t.Fatalf("AddHost after revoke returned error: %v", err)
 	}
-	if h3.WGIP != "10.42.0.1" {
-		t.Errorf("web03 WGIP = %q, want freed 10.42.0.1", h3.WGIP)
+	if h3.WGIP != "10.42.0.2" {
+		t.Errorf("web03 WGIP = %q, want freed 10.42.0.2", h3.WGIP)
 	}
 }
 
@@ -108,8 +109,8 @@ func TestAllocationSurvivesReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Simulate restart: reopen and allocate again — must continue at .3,
-	// not hand out an already-used address.
+	// Simulate restart: reopen and allocate again — must continue at .4,
+	// not hand out an already-used address (.2/.3 are taken; .1 reserved).
 	inv2, err := Open(path, testNetwork)
 	if err != nil {
 		t.Fatalf("reopen returned error: %v", err)
@@ -119,8 +120,8 @@ func TestAllocationSurvivesReopen(t *testing.T) {
 	if err := inv2.AddHost(h3); err != nil {
 		t.Fatal(err)
 	}
-	if h3.WGIP != "10.42.0.3" {
-		t.Errorf("after restart WGIP = %q, want 10.42.0.3", h3.WGIP)
+	if h3.WGIP != "10.42.0.4" {
+		t.Errorf("after restart WGIP = %q, want 10.42.0.4", h3.WGIP)
 	}
 	ips, err := inv2.AllocatedIPs()
 	if err != nil {
@@ -142,8 +143,9 @@ func TestGetAndListHosts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetHost returned error: %v", err)
 	}
-	if h.WGIP != "10.42.0.2" {
-		t.Errorf("web01 WGIP = %q, want 10.42.0.2", h.WGIP)
+	// Allocation order: web02=.2, web01=.3, db01=.4 (.1 is the server's).
+	if h.WGIP != "10.42.0.3" {
+		t.Errorf("web01 WGIP = %q, want 10.42.0.3", h.WGIP)
 	}
 	if _, err := inv.GetHost("nope"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("GetHost(nope) error = %v, want ErrNotFound", err)
@@ -231,19 +233,17 @@ func TestTokenUnknown(t *testing.T) {
 }
 
 func TestIPAMExhaustion(t *testing.T) {
-	// /30 gives network + broadcast + 2 usable → exhaustion is reachable.
+	// /30: network + broadcast + 2 addresses — .1 is reserved for the
+	// server, so exactly one host fits and the second exhausts.
 	inv, err := Open(filepath.Join(t.TempDir(), "inv.db"), "10.99.0.0/30")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer inv.Close()
-	for k, name := range []string{"a", "b"} {
-		if err := inv.AddHost(&Host{Hostname: name}); err != nil {
-			t.Fatalf("AddHost %s: %v", name, err)
-		}
-		_ = k
+	if err := inv.AddHost(&Host{Hostname: "a"}); err != nil {
+		t.Fatalf("AddHost a: %v", err)
 	}
-	err = inv.AddHost(&Host{Hostname: "c"})
+	err = inv.AddHost(&Host{Hostname: "b"})
 	if !errors.Is(err, ErrIPExhausted) {
 		t.Fatalf("AddHost past exhaustion error = %v, want ErrIPExhausted", err)
 	}
