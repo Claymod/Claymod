@@ -1,0 +1,19 @@
+/// Systemd service resources (Linux v1).
+module claymod.std.service
+
+import "modulepath:/claymod/base.pkl"
+
+/// Manages a systemd unit: enablement at boot and running state.
+class Unit extends base.Resource {
+  type = "std.service.Unit"
+
+  /// Unit name (e.g. "nginx", "nginx.service").
+  unit: String
+
+  /// Desired running state: "started", "stopped", "restarted", "reloaded"
+  /// (empty = leave running state alone).
+  state: String = "started"
+
+  /// Desired boot enablement (null = leave unchanged).
+  enabled: Boolean? = null
+}

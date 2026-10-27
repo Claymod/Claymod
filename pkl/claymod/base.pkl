@@ -1,0 +1,42 @@
+/// Claymod playbook schema — base module.
+///
+/// Playbooks amend this module:
+///
+///   amends "modulepath:/claymod/base.pkl"
+///   hosts { "web01"; "web02" }
+///   resources {
+///     new files.Copy { name = "motd"; source = "files/motd.txt"; dest = "/etc/motd" }
+///   }
+///
+/// The control server evaluates this module (pkl CLI) to JSON, validates
+/// the result and compiles resources to primitive ops. Agents never see
+/// PKL.
+module claymod.base
+
+/// A resource is one declarative item applied to the selected hosts.
+/// `type` is filled by each concrete subclass and is the module
+/// discriminator the Go compiler keys on.
+abstract class Resource {
+  /// Unique resource name; `dependsOn` refers to names.
+  name: String
+
+  /// Dependencies by resource name; the planner topologically sorts on
+  /// these (cycles are a validation error).
+  dependsOn: Listing<String> = new Listing {}
+}
+
+/// The hostname of the host a playbook is being rendered for (per-host
+/// rendering). The control server injects it; it is empty when the
+/// playbook is evaluated standalone (validate/plan without a host).
+hostName: String = ""
+
+/// Hosts to apply this playbook to (exact names in v1).
+hosts: Listing<String> = new Listing {}
+
+/// Per-host variables available to templates and resource fields via
+/// `read?("env:...")`-style access in the host render pass (see docs).
+vars: Mapping<String, String> = new Mapping {}
+
+/// The resources to apply, in the order given unless `dependsOn` forces
+/// a different topological order.
+resources: Listing<Resource> = new Listing {}

@@ -1,0 +1,66 @@
+/// Command resources: imperative escape hatch, executed on the host.
+module claymod.std.commands
+
+import "modulepath:/claymod/base.pkl"
+
+/// Runs a command on the host. Exactly one of `argv` and `shell` must be
+/// set. Commands are powerful: they run with the agent's privileges.
+class Shell extends base.Resource {
+  type = "std.commands.Shell"
+
+  /// Shell command line (run with /bin/sh -c). Mutually exclusive with argv.
+  command: String = ""
+
+  /// Executable and arguments. Mutually exclusive with command.
+  argv: Listing<String> = new Listing {}
+
+  /// Working directory (empty = agent default).
+  cwd: String = ""
+
+  /// Extra environment variables.
+  env: Mapping<String, String> = new Mapping {}
+
+  /// Run only when this shell command exits 0.
+  onlyIf: String = ""
+
+  /// Skip when this shell command exits 0.
+  unlessIf: String = ""
+
+  /// Skip when this path exists.
+  creates: String = ""
+
+  /// Skip when this path is absent.
+  removes: String = ""
+
+  /// Timeout in milliseconds (0 = agent default).
+  timeout: Int = 0
+}
+
+/// Writes a server-rendered script and runs it, in one op sequence.
+class Script extends base.Resource {
+  type = "std.commands.Script"
+
+  /// Script body (rendered server-side with the host's vars).
+  content: String
+
+  /// Absolute path to write the script on the host.
+  path: String
+
+  /// Octal mode for the script file.
+  mode: String = "0755"
+
+  /// Working directory for the run.
+  cwd: String = ""
+
+  /// Extra environment variables.
+  env: Mapping<String, String> = new Mapping {}
+
+  /// Run only when this shell command exits 0.
+  onlyIf: String = ""
+
+  /// Skip when this shell command exits 0.
+  unlessIf: String = ""
+
+  /// Timeout in milliseconds.
+  timeout: Int = 0
+}

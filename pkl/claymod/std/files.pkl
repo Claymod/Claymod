@@ -1,0 +1,75 @@
+/// File resources: server-side rendering, agent-side apply.
+module claymod.std.files
+
+import "modulepath:/claymod/base.pkl"
+
+/// Copies a static file to the host. Content is read server-side from
+/// `source` (relative to the playbook file).
+class Copy extends base.Resource {
+  type = "std.files.Copy"
+
+  /// Source file, relative to the playbook's directory.
+  source: String
+
+  /// Absolute destination path on the host.
+  dest: String
+
+  /// Octal file mode (e.g. "0644").
+  mode: String = "0644"
+
+  /// Owner user name or numeric uid (empty = leave unchanged).
+  owner: String = ""
+
+  /// Group name or numeric gid (empty = leave unchanged).
+  group: String = ""
+
+  /// Keep a `.bak` copy of any file overwritten.
+  backup: Boolean = false
+}
+
+/// Renders a Go text/template server-side with `vars` and writes the
+/// result to the host.
+class Template extends base.Resource {
+  type = "std.files.Template"
+
+  /// Template file, relative to the playbook's directory.
+  source: String
+
+  /// Absolute destination path on the host.
+  dest: String
+
+  /// Octal file mode.
+  mode: String = "0644"
+
+  /// Template variables (merged with the playbook's per-host `vars`).
+  vars: Mapping<String, String> = new Mapping {}
+
+  /// Owner user name or numeric uid.
+  owner: String = ""
+
+  /// Group name or numeric gid.
+  group: String = ""
+
+  /// Keep a `.bak` copy of any file overwritten.
+  backup: Boolean = false
+}
+
+/// Ensures a directory exists (with mode/ownership) or is absent.
+class Directory extends base.Resource {
+  type = "std.files.Directory"
+
+  /// Absolute path on the host.
+  path: String
+
+  /// Octal mode applied when creating or correcting.
+  mode: String = "0755"
+
+  /// "directory" (default) or "absent".
+  ensure: String = "directory"
+
+  /// Owner user name or numeric uid.
+  owner: String = ""
+
+  /// Group name or numeric gid.
+  group: String = ""
+}
