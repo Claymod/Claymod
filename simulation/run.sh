@@ -26,7 +26,7 @@ if [ "${1:-}" = "--local" ]; then
     --bootstrap-listen 127.0.0.1:8443 \
     --server-name localhost \
     --wg-backend fake \
-    --wg-endpoint 127.0.0.1:51820 &
+    --wg-endpoint 127.0.0.1:51821 &
   CONTROL_PID=$!
   cleanup() {
     kill "$CONTROL_PID" "${AGENT_PID:-}" 2>/dev/null || true

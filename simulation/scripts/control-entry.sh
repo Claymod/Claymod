@@ -17,7 +17,7 @@ claymod serve \
   --bootstrap-listen :8443 \
   --server-name "${SERVER_NAME:-control}" \
   --wg-backend fake \
-  --wg-endpoint control:51820 &
+  --wg-endpoint control:51821 &
 SERVE_PID=$!
 
 # Wait for the bootstrap endpoint to answer.
