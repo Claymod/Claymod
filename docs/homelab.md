@@ -158,7 +158,7 @@ Before=claymod-serve.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/bin/sh -c 'awk -F"\\"" "/private/ {print \$4}" /root/claymod-data/wg-keys.json | tee /run/claymod-wg.key >/dev/null && chmod 600 /run/claymod-wg.key && ip link add dev claymod0 type wireguard && ip address add 10.42.0.1/24 dev claymod0 && wg set claymod0 private-key /run/claymod-wg.key listen-port 51820 && ip link set up dev claymod0 && rm /run/claymod-wg.key'
+ExecStart=/bin/sh -c 'awk -F"\"" "/private/ {print \$4}" /root/claymod-data/wg-keys.json | tee /run/claymod-wg.key >/dev/null && chmod 600 /run/claymod-wg.key && ip link add dev claymod0 type wireguard && ip address add 10.42.0.1/24 dev claymod0 && wg set claymod0 private-key /run/claymod-wg.key listen-port 51820 && ip link set up dev claymod0 && rm /run/claymod-wg.key'
 
 [Install]
 WantedBy=multi-user.target
