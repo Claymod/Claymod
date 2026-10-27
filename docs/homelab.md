@@ -63,12 +63,15 @@ UTM on Apple Silicon is **arm64**; check with `uname -m` on each target:
 ```sh
 ssh root@VPS_IP
 apt update
-apt install -y wireguard-tools sqlite3 rsync
+apt install -y wireguard-tools rsync
 ```
 
-- `wireguard-tools` provides `wg`/`wg-quick` (the interface is created
-  with `ip link`, but `wg set` configures peers).
-- `sqlite3` is only for the optional peer-restore recipe (§1.6).
+- `wireguard-tools` provides `wg`/`wg-quick`: with the default
+  operator-managed interface you apply the config `serve` generates
+  (§1.4). With `--manage-interface` claymod drives `ip`/`wg` itself and
+  doesn't need them, but keeping them installed is useful for `wg show`.
+- Reboot behaviour is automatic now — no sqlite3 peer-restore recipes
+  (see §1.6).
 
 ### 1.2 Upload claymod
 
@@ -117,6 +120,11 @@ bootstrap certificate fingerprint (pin with --ca-pin):
 
 Copy that fingerprint — it is what the VM will pin during enrollment.
 
+The same startup also writes `~/claymod-data/claymod0.conf` and logs
+`wireguard configuration written … peers N` — that file is what you
+apply with `wg-quick`/`wg syncconf` (§1.4), and it is regenerated on
+every enrollment change.
+
 Enrollment via a bare IP (`https://VPS_IP:8443`) does **not** work with
 `--ca` (the cert has DNS SANs only, no IP SAN — Go's verifier rejects
 the hostname). Use `--ca-pin <fingerprint>` on the VM, exactly as in
@@ -125,53 +133,50 @@ Phase 2. (`--ca` works if you enroll via a DNS name that equals
 
 ### 1.4 Bring up the WireGuard interface
 
-`wg(8)` wants the private key as a raw base64 file, but claymod stores
-it as JSON — unpack it first (this is the same command `enroll` prints
-on agents):
+`serve` does the configuration work for you: it installs peers on
+`claymod0` via wgctrl as hosts enroll/revoke, **re-syncs every peer from
+the inventory at startup**, and maintains a wg-quick config at
+`~/claymod-data/claymod0.conf` (0600 — it contains the server's private
+key), regenerated on every enroll/revoke and restart.
+
+Two ways to bring the interface up — pick one:
+
+**Operator-managed (default; claymod never touches the interface):**
 
 ```sh
-awk -F'"' '/private/ {print $4}' ~/claymod-data/wg-keys.json \
-  | tee /run/claymod-wg.key >/dev/null && chmod 600 /run/claymod-wg.key
-
-ip link add dev claymod0 type wireguard
-ip address add 10.42.0.1/24 dev claymod0
-wg set claymod0 private-key /run/claymod-wg.key listen-port 51821
-ip link set up dev claymod0
-rm /run/claymod-wg.key
+wg-quick up ~/claymod-data/claymod0.conf        # first time
+# on later changes (enroll/revoke), apply the update without downtime:
+wg syncconf claymod0 <(wg-quick strip ~/claymod-data/claymod0.conf)
 ```
 
-Peers are installed **automatically** by `serve` (wgctrl backend) as
-hosts enroll — nothing to do by hand here.
+**Let claymod manage the interface (root, one flag):**
 
-### 1.5 Keep it running: systemd units
-
-`/etc/systemd/system/claymod-wg.service` (recreates the interface after
-reboot; runs before the server):
-
-```ini
-[Unit]
-Description=claymod WireGuard interface
-After=network-online.target
-Wants=network-online.target
-Before=claymod-serve.service
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart=/bin/sh -c 'awk -F"\"" "/private/ {print \$4}" /root/claymod-data/wg-keys.json | tee /run/claymod-wg.key >/dev/null && chmod 600 /run/claymod-wg.key && ip link add dev claymod0 type wireguard && ip address add 10.42.0.1/24 dev claymod0 && wg set claymod0 private-key /run/claymod-wg.key listen-port 51821 && ip link set up dev claymod0 && rm /run/claymod-wg.key'
-
-[Install]
-WantedBy=multi-user.target
+```sh
+claymod serve ... --manage-interface
 ```
 
-`/etc/systemd/system/claymod-serve.service`:
+`--manage-interface` creates the interface if missing, assigns the
+overlay address, private key and listen port at startup (needs
+`CAP_NET_ADMIN`); peers are still synced via wgctrl.
+
+Either way, verify: `wg show` lists `claymod0` listening on **51821**
+(not 51820 — claymod deliberately avoids the standard port so it never
+collides with your own tunnels).
+
+### 1.5 Keep it running: systemd unit
+
+One unit is enough — `serve` itself re-syncs all peers from the
+inventory at startup and (with `--manage-interface`) recreates the
+interface, so a plain restart of the server restores the whole overlay.
+
+`/etc/systemd/system/claymod-serve.service` (operator-managed variant;
+add `--manage-interface` if claymod should own the interface):
 
 ```ini
 [Unit]
 Description=claymod control server
-After=network-online.target claymod-wg.service
+After=network-online.target wg-quick@claymod0.service
 Wants=network-online.target
-Requires=claymod-wg.service
 
 [Service]
 ExecStart=/usr/local/bin/claymod serve --data-dir /root/claymod-data --bootstrap-listen 0.0.0.0:8443 --server-name vps --wg-interface claymod0 --wg-endpoint VPS_IP:51821 --agent-network 10.42.0.0/24 --wg-backend wgctrl
@@ -184,30 +189,32 @@ WantedBy=multi-user.target
 
 ```sh
 systemctl daemon-reload
-systemctl enable --now claymod-wg claymod-serve
+systemctl enable --now claymod-serve
 systemctl status claymod-serve
 ```
 
-### 1.6 Known limitation: peers after a reboot of the WG interface
+With `--manage-interface`, drop the `After=wg-quick@…` line: claymod
+brings the interface up itself on every start.
 
-Peers are added to `claymod0` at enrollment time. If the interface is
-recreated (e.g. you bring it down/up manually), `serve` does **not**
-re-sync peers from the inventory — re-add them manually:
+### 1.6 Reboot behaviour
 
-```sh
-sqlite3 ~/claymod-data/inventory.db "select hostname, public_key, wg_ip from hosts"
-# for each host:
-wg set claymod0 peer <public_key> allowed-ips <wg_ip>/32
-```
+No manual peer surgery needed any more: on every start `serve` reads the
+inventory (the source of truth) and re-installs all peers on `claymod0`
+via wgctrl, then rewrites `claymod0.conf`. Agents initiate the tunnel
+with `persistent-keepalive 25`, so as soon as the server is back — and
+the interface exists — handshakes resume automatically.
 
-(A full reboot **requires re-adding the peers**: the `claymod-wg`
-unit recreates `claymod0` with only the server's private key — no
-peers — and `serve` does not re-sync them from the inventory. WireGuard
-silently drops handshake initiations from unknown public keys, so the
-agents' `persistent-keepalive 25` alone cannot restore the tunnel:
-every keepalive is dropped until its public key is known again. After
-any reboot, run the `sqlite3` + `wg set` loop above for every enrolled
-host.)
+The only boot decision is **who creates the interface**:
+
+- `--manage-interface`: nothing to do; `serve` recreates it at startup.
+- operator-managed: `wg-quick@claymod0.service` reads
+  `/etc/wireguard/claymod0.conf`, so link the generated file there once
+  and enable the unit — after that it always boots current, because
+  `serve` keeps the file up to date:
+  ```sh
+  ln -s ~/claymod-data/claymod0.conf /etc/wireguard/claymod0.conf
+  systemctl enable wg-quick@claymod0
+  ```
 
 ## Phase 2 — Enroll the Debian VM
 
@@ -248,8 +255,8 @@ claymod enroll \
 ```
 
 Files land in `/etc/claymod/` (`ca.pem`, `agent.pem`, `agent-key.pem`,
-`agent.yaml`, `wg-keys.json`), and the command prints the WireGuard
-setup commands with the **allocated overlay IP** — note it.
+`agent.yaml`, `wg-keys.json`, `wg-setup.json`), and the command prints
+the one bring-up step with the **allocated overlay IP** — note it.
 
 Assertions you can make now (both must fail):
 - reuse the token → refused (single-use);
@@ -257,21 +264,28 @@ Assertions you can make now (both must fail):
 
 ### 2.4 Bring up the tunnel (on the VM)
 
-```sh
-awk -F'"' '/private/ {print $4}' /etc/claymod/wg-keys.json \
-  | tee /run/claymod-wg.key >/dev/null && chmod 600 /run/claymod-wg.key
+`enroll` wrote `/etc/claymod/wg-setup.json` with everything needed
+(overlay address, the locally generated private key, the server's peer
+entry — endpoint `VPS_IP:51821`, keepalive 25). One root command applies
+it:
 
-ip link add dev claymod0 type wireguard
-ip address add <allocated-ip>/24 dev claymod0        # e.g. 10.42.0.2
-wg set claymod0 private-key /run/claymod-wg.key listen-port 51821 \
-  peer <server-public-key> endpoint VPS_IP:51821 \
-  allowed-ips 10.42.0.0/24 persistent-keepalive 25
-ip link set up dev claymod0
-rm /run/claymod-wg.key
+```sh
+sudo claymod wg-setup --out-dir /etc/claymod
+# → wireguard interface claymod0 is up (10.42.0.2/24)
+#   peer <server-public-key> endpoint VPS_IP:51821 allowed-ips 10.42.0.0/24
 ```
 
-(`<server-public-key>` is printed by `enroll`; it is also the
-`Public` field of `~/claymod-data/wg-keys.json` on the VPS.)
+This is the **only** root step of enrollment. If you prefer
+operator-managed networking, render a wg-quick config from
+`wg-setup.json` yourself (interface `claymod0`, `Address = <allocated-ip>/24`,
+`ListenPort = 51821`, one `[Peer]` block for the server) — claymod won't
+fight you.
+
+At boot, re-run `wg-setup` (or your own wg-quick unit) before the agent:
+the private key and peer live only in the interface, not on disk in
+applied form. A `claymod-wg.service` oneshot that runs
+`claymod wg-setup --out-dir /etc/claymod` (`Before=claymod-agent`) is
+the simplest way.
 
 Verify:
 
@@ -290,8 +304,9 @@ see it listen; then `claymod-agent.service`):
 ```ini
 [Unit]
 Description=claymod agent
-After=network-online.target
+After=network-online.target claymod-wg.service
 Wants=network-online.target
+Requires=claymod-wg.service
 
 [Service]
 ExecStart=/usr/local/bin/claymod agent --config /etc/claymod/agent.yaml
@@ -302,9 +317,12 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
+`claymod-wg.service` is the oneshot from §2.4 that runs
+`claymod wg-setup --out-dir /etc/claymod` at boot.
+
 ```sh
 systemctl daemon-reload
-systemctl enable --now claymod-agent
+systemctl enable --now claymod-wg claymod-agent
 ```
 
 The agent listens **only** on the overlay address, TCP 2323, inside the
@@ -435,8 +453,8 @@ tcpdump -ni any port 2323            # then run an apply in another shell
 |---|---|
 | enroll: `fingerprint mismatch` | you pinned the CA fingerprint instead of the **bootstrap certificate** fingerprint (the one `serve` prints) |
 | enroll hangs on a bare IP with `--ca` | the cert has no IP SAN (see §1.3) — use `--ca-pin` or a DNS name equal to `--server-name` |
-| `wg show` empty on the VPS | peer not yet added — it is added at enrollment; check `serve` ran with `--wg-backend wgctrl` (not `fake`) |
+| `wg show` empty on the VPS | no peer installed — check `serve` ran with `--wg-backend wgctrl` (not `fake`) and watch its log for the `wireguard configuration written` line |
 | tunnel up, agent unreachable | the agent listens on the overlay IP only; check `ss -tlnp | grep 2323` on the VM and that `agent.yaml` `listen` matches |
 | apply: `x509: certificate ... not found` | the CA rotated or `--data-dir` points at a different deployment than the agent enrolled against |
-| `wg set: Bad file` / key rejected | you passed the JSON file instead of the unpacked raw key (see the `awk` line) |
+| handshakes never resume after a reboot | the server interface is missing (operator-managed path: `wg-quick@claymod0` not enabled) — `serve` re-syncs peers but the interface must exist |
 | playbook: `modulepath:/claymod/base.pkl` not found | run from the directory containing `pkl/`, or set `CLAYMOD_SCHEMA_DIR` |
