@@ -28,6 +28,7 @@ them to enrolled hosts over a WireGuard tunnel.`,
 	root.AddCommand(newVersionCmd())
 	root.AddCommand(newAgentCmd())
 	root.AddCommand(newProbeCmd())
+	root.AddCommand(newPlaybookCmd())
 	return root
 }
 
