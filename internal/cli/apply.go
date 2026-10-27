@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"crypto/x509"
 	"fmt"
 	"io"
 	"os"
@@ -17,10 +18,12 @@ import (
 	"github.com/claymod/claymod/internal/playbook"
 	"github.com/claymod/claymod/internal/proto"
 	"github.com/claymod/claymod/internal/runner"
+	"github.com/claymod/claymod/internal/state"
 )
 
 // applyOptions configures one playbook apply run.
 type applyOptions struct {
+	dataDir       string
 	inventoryPath string
 	agentNetwork  string
 	agentPort     int
@@ -28,6 +31,7 @@ type applyOptions struct {
 	certFile      string
 	keyFile       string
 	check         bool
+	verbose       bool
 	limit         string
 	maxFail       int
 	parallel      int
@@ -47,21 +51,19 @@ framed mTLS protocol. Hosts are applied to in parallel.`,
 			return runApply(cmd.Context(), cmd, args[0], o)
 		},
 	}
-	cmd.Flags().StringVar(&o.inventoryPath, "inventory", "", "path to the inventory database (sqlite)")
+	cmd.Flags().StringVar(&o.dataDir, "data-dir", "claymod-data", "server data directory (default control identity and inventory)")
+	cmd.Flags().StringVar(&o.inventoryPath, "inventory", "", "path to the inventory database (default: <data-dir>/inventory.db)")
 	cmd.Flags().StringVar(&o.agentNetwork, "agent-network", "10.42.0.0/24", "agent overlay CIDR the inventory uses")
 	cmd.Flags().IntVar(&o.agentPort, "agent-port", 2323, "agent port on the WireGuard overlay")
-	cmd.Flags().StringVar(&o.caFile, "ca", "", "PEM file with the CA used to verify agents")
-	cmd.Flags().StringVar(&o.certFile, "cert", "", "PEM file with the control client certificate")
-	cmd.Flags().StringVar(&o.keyFile, "key", "", "PEM file with the control client key")
+	cmd.Flags().StringVar(&o.caFile, "ca", "", "PEM file with the CA used to verify agents (default: <data-dir>/ca/ca.pem)")
+	cmd.Flags().StringVar(&o.certFile, "cert", "", "PEM file with the control client certificate (default: <data-dir>/control.pem)")
+	cmd.Flags().StringVar(&o.keyFile, "key", "", "PEM file with the control client key (default: <data-dir>/control-key.pem)")
 	cmd.Flags().BoolVar(&o.check, "check", false, "report would-change without mutating hosts")
+	cmd.Flags().BoolVarP(&o.verbose, "verbose", "v", false, "print per-op detail for every host")
 	cmd.Flags().StringVar(&o.limit, "limit", "", "comma-separated hostnames to apply to (default: all targeted)")
 	cmd.Flags().IntVar(&o.maxFail, "max-fail", 0, "failed hosts tolerated before skipping the rest (-1 = run all)")
 	cmd.Flags().IntVar(&o.parallel, "parallel", runner.DefaultParallelism, "number of hosts applied to concurrently")
 	cmd.Flags().StringVar(&o.host, "host", "", "render templates for this host (default: each target host)")
-	_ = cmd.MarkFlagRequired("inventory")
-	_ = cmd.MarkFlagRequired("ca")
-	_ = cmd.MarkFlagRequired("cert")
-	_ = cmd.MarkFlagRequired("key")
 	return cmd
 }
 
@@ -76,7 +78,11 @@ func runApply(ctx context.Context, cmd *cobra.Command, playbookFile string, o ap
 	}
 	playbookDir := filepath.Dir(mustAbs(playbookFile))
 
-	inv, err := inventory.Open(o.inventoryPath, o.agentNetwork)
+	invPath := o.inventoryPath
+	if invPath == "" {
+		invPath = filepath.Join(o.dataDir, "inventory.db")
+	}
+	inv, err := inventory.Open(invPath, o.agentNetwork)
 	if err != nil {
 		return err
 	}
@@ -125,25 +131,39 @@ func runApply(ctx context.Context, cmd *cobra.Command, playbookFile string, o ap
 		return fmt.Errorf("no hosts selected (playbook hosts: %s)", strings.Join(pb.Hosts, ", "))
 	}
 
-	caPEM, err := os.ReadFile(o.caFile)
-	if err != nil {
-		return fmt.Errorf("read CA: %w", err)
-	}
-	serverPool, err := proto.CertPoolFromPEM(caPEM)
-	if err != nil {
-		return err
-	}
-	certPEM, err := os.ReadFile(o.certFile)
-	if err != nil {
-		return fmt.Errorf("read client cert: %w", err)
-	}
-	keyPEM, err := os.ReadFile(o.keyFile)
-	if err != nil {
-		return fmt.Errorf("read client key: %w", err)
-	}
-	id, err := proto.LoadIdentity(certPEM, keyPEM)
-	if err != nil {
-		return err
+	var id proto.Identity
+	var serverPool *x509.CertPool
+	if o.caFile == "" && o.certFile == "" && o.keyFile == "" {
+		// Default: the control identity created by `claymod serve`.
+		ctrl, err := state.LoadControlIdentity(o.dataDir)
+		if err != nil {
+			return err
+		}
+		id, serverPool = ctrl.Identity, ctrl.ServerPool
+	} else {
+		if o.caFile == "" || o.certFile == "" || o.keyFile == "" {
+			return fmt.Errorf("--ca, --cert and --key must be given together")
+		}
+		caPEM, err := os.ReadFile(o.caFile)
+		if err != nil {
+			return fmt.Errorf("read CA: %w", err)
+		}
+		serverPool, err = proto.CertPoolFromPEM(caPEM)
+		if err != nil {
+			return err
+		}
+		certPEM, err := os.ReadFile(o.certFile)
+		if err != nil {
+			return fmt.Errorf("read client cert: %w", err)
+		}
+		keyPEM, err := os.ReadFile(o.keyFile)
+		if err != nil {
+			return fmt.Errorf("read client key: %w", err)
+		}
+		id, err = proto.LoadIdentity(certPEM, keyPEM)
+		if err != nil {
+			return err
+		}
 	}
 
 	// Compile per host: every host gets its own render context (hostName,
@@ -158,8 +178,14 @@ func runApply(ctx context.Context, cmd *cobra.Command, playbookFile string, o ap
 		if err != nil {
 			return err
 		}
+		renderHost := hostname
+		if o.host != "" {
+			// --host overrides the render hostname for every target
+			// (consistent template output across hosts).
+			renderHost = o.host
+		}
 		renderCtx := playbook.RenderContext{
-			Host:        hostname,
+			Host:        renderHost,
 			Vars:        playbook.MergedVars(pb.Vars, nil),
 			PlaybookDir: playbookDir,
 		}
@@ -193,11 +219,11 @@ func runApply(ctx context.Context, cmd *cobra.Command, playbookFile string, o ap
 		return err
 	}
 
-	printReport(out, report, o.check)
+	printReport(out, report, o.check, o.verbose)
 	return report.Err()
 }
 
-func printReport(out io.Writer, report *runner.Report, check bool) {
+func printReport(out io.Writer, report *runner.Report, check bool, verbose bool) {
 	// Per-host results in request order.
 	for _, res := range report.Results {
 		switch {
@@ -214,6 +240,25 @@ func printReport(out io.Writer, report *runner.Report, check bool) {
 			}
 			fmt.Fprintf(out, "%-20s %-8s %d ok, %d changed, %d failed\n",
 				res.Hostname, state, res.OK, res.Changed, res.Failed)
+			if verbose {
+				for _, op := range res.Ops {
+					marker := " "
+					switch {
+					case op.Failed:
+						marker = "!"
+					case op.Changed:
+						marker = "+"
+					}
+					detail := op.Message
+					if detail == "" {
+						detail = op.OpType
+					}
+					fmt.Fprintf(out, "  %s %-10s %s\n", marker, op.OpType, detail)
+					if op.Stderr != "" {
+						fmt.Fprintf(out, "      stderr: %s\n", strings.TrimSpace(op.Stderr))
+					}
+				}
+			}
 		}
 	}
 	summary := "apply complete"

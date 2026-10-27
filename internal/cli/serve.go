@@ -156,6 +156,7 @@ func newHostCmd() *cobra.Command {
 	}
 	cmd.AddCommand(newHostTokenCmd())
 	cmd.AddCommand(newHostListCmd())
+	cmd.AddCommand(newHostFactsCmd())
 	cmd.AddCommand(newHostRevokeCmd())
 	return cmd
 }

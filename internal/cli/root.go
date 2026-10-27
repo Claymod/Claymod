@@ -32,6 +32,7 @@ them to enrolled hosts over a WireGuard tunnel.`,
 	root.AddCommand(newServeCmd())
 	root.AddCommand(newEnrollCmd())
 	root.AddCommand(newHostCmd())
+	root.AddCommand(newExecCmd())
 	return root
 }
 
