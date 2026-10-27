@@ -98,6 +98,11 @@ CREATE TABLE IF NOT EXISTS ip_allocations (
   ip          TEXT PRIMARY KEY,
   hostname    TEXT NOT NULL UNIQUE,
   allocated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS revocations (
+  serial     TEXT PRIMARY KEY,
+  hostname   TEXT NOT NULL,
+  revoked_at TEXT NOT NULL
 );`
 	if _, err := inv.db.Exec(schema); err != nil {
 		return fmt.Errorf("create schema: %w", err)
