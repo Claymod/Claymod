@@ -11,9 +11,14 @@ DATA_DIR=/data
 export CLAYMOD_SCHEMA_DIR="${CLAYMOD_SCHEMA_DIR:-/pkl}"
 
 echo "== starting claymod serve (HTTPS bootstrap on :8443)"
-mkdir -p "$DATA_DIR"
+mkdir -p "$DATA_DIR/agents"
+# Stage the agent binary for download during bootstrap (air-gap flow:
+# hosts fetch their agent over the pinned TLS channel).
+cp /opt/claymod-agent-src "$DATA_DIR/agents/claymod-agent-linux-amd64"
+chmod 0755 "$DATA_DIR/agents/claymod-agent-linux-amd64"
 claymod serve \
   --data-dir "$DATA_DIR" \
+  --agent-bin-dir "$DATA_DIR/agents" \
   --bootstrap-listen :8443 \
   --server-name "${SERVER_NAME:-control}" \
   --wg-backend fake \

@@ -17,12 +17,20 @@ if [ "${1:-}" = "--local" ]; then
   rm -rf "$WORK"
   mkdir -p "$WORK/control" "$WORK/host" "$WORK/shared"
 
-  echo "== building claymod"
-  (cd "$ROOT" && go build -o "$WORK/claymod" ./cmd/claymod)
+  echo "== building claymod + claymod-agent"
+  (cd "$ROOT" && go build -o "$WORK/claymod" ./cmd/claymod && \
+    CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$WORK/claymod-agent" ./cmd/claymod-agent)
+
+  # Stage the agent for download (air-gap flow mirrors docker mode).
+  HOST_OS=$(go env GOOS)
+  HOST_ARCH=$(go env GOARCH)
+  mkdir -p "$WORK/control/agents"
+  cp "$WORK/claymod-agent" "$WORK/control/agents/claymod-agent-$HOST_OS-$HOST_ARCH"
 
   echo "== starting control server (HTTPS bootstrap on 127.0.0.1:8443)"
   "$WORK/claymod" serve \
     --data-dir "$WORK/control" \
+    --agent-bin-dir "$WORK/control/agents" \
     --bootstrap-listen 127.0.0.1:8443 \
     --server-name localhost \
     --wg-backend fake \
@@ -52,8 +60,22 @@ if [ "${1:-}" = "--local" ]; then
     --data-dir "$WORK/control" \
     --token-file "$WORK/shared/token" --ttl 10m
 
+  echo "== downloading the agent from the server (air-gap bootstrap)"
+  curl -fsS --cacert "$WORK/shared/ca.pem" \
+    -o "$WORK/claymod-agent-dl" "https://localhost:8443/agent/$HOST_OS/$HOST_ARCH"
+  chmod +x "$WORK/claymod-agent-dl"
+  curl -fsS --cacert "$WORK/shared/ca.pem" \
+    "https://localhost:8443/agent/$HOST_OS/$HOST_ARCH.sha256" > "$WORK/agent.sha256"
+  ACTUAL=$(shasum -a 256 "$WORK/claymod-agent-dl" | awk '{print $1}')
+  EXPECTED=$(awk '{print $1}' "$WORK/agent.sha256")
+  if [ "$ACTUAL" != "$EXPECTED" ]; then
+    echo "SECURITY FAILURE: agent digest mismatch ($ACTUAL != $EXPECTED)" >&2
+    exit 1
+  fi
+  echo "== agent digest verified ($ACTUAL)"
+
   echo "== enrolling host (pinned CA bundle)"
-  "$WORK/claymod" enroll \
+  "$WORK/claymod-agent-dl" enroll \
     --server https://localhost:8443 \
     --token "$(tr -d '[:space:]' < "$WORK/shared/token")" \
     --hostname agent \
@@ -62,8 +84,8 @@ if [ "${1:-}" = "--local" ]; then
     --listen 127.0.0.1:2323 \
     --skip-wg-config
 
-  echo "== starting the enrolled agent on 127.0.0.1:2323"
-  "$WORK/claymod" agent --config "$WORK/host/agent.yaml" &
+  echo "== starting the downloaded agent on 127.0.0.1:2323"
+  "$WORK/claymod-agent-dl" agent --config "$WORK/host/agent.yaml" &
   AGENT_PID=$!
   sleep 1
 
