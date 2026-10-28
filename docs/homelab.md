@@ -91,7 +91,7 @@ install -m 0755 claymod-linux-<arch> /usr/local/bin/claymod
 ```
 
 Optionally pre-stage the agent binaries for hosts to download over the
-pinned bootstrap channel (the one-liner and air-gap flow need this;
+bootstrap channel (the one-liner and air-gap flow need this;
 §1.3 adds `--agent-bin-dir`):
 
 ```sh
@@ -121,9 +121,10 @@ ssh root@VPS_IP
 
 The first run generates the CA, bootstrap certificate, server WireGuard
 key pair and inventory DB, then reloads them on every later start. The
-bootstrap certificate is issued **once** with `--server-name` baked in
-as its only DNS SANs — choose it now (changing it later means deleting
-`server.pem`/`server-key.pem`, i.e. re-issuing).
+bootstrap certificate bakes `--server-name` into its SANs — a DNS name
+becomes a DNS SAN, an IP becomes an IP SAN — and is **re-issued
+automatically** whenever `--server-name` changes (the CA, and with it
+the fingerprint, stays stable).
 
 ```sh
 cd ~/claymod
@@ -141,24 +142,25 @@ One fingerprint is printed — the **CA fingerprint**, the single pin of
 the deployment:
 
 ```
-CA fingerprint (the pin: /enroll.sh and --ca-pin)
+CA fingerprint (the pin for agent enroll --ca-pin/--ca)
   <64 hex chars>
 ```
 
-Copy it: the preferred one-liner (§2.3) and manual `enroll --ca-pin`
-(§2.4) both verify the served `/ca.pem` bundle against exactly this
-value. `serve` also prints the ready-made one-liner command.
+Copy it: the manual `enroll --ca-pin` flow (§2.4) verifies the served
+`/ca.pem` bundle against exactly this value. The one-liner (§2.3) does
+not need it — there the token is the credential. `serve` also prints
+the ready-made one-liner command.
 
 The same startup also writes `~/claymod-data/claymod0.conf` and logs
 `wireguard configuration written … peers N` — that file is what you
 apply with `wg-quick`/`wg syncconf` (§1.4), and it is regenerated on
 every enrollment change.
 
-Enrollment via a bare IP (`https://VPS_IP:8443`) does **not** work with
-`--ca` (the cert has DNS SANs only, no IP SAN — Go's verifier rejects
-the hostname). Use `--ca-pin <fingerprint>` on the VM, exactly as in
-Phase 2. (`--ca` works if you enroll via a DNS name that equals
-`--server-name`.)
+Enrollment via a bare IP (`https://VPS_IP:8443`) works in every flow:
+the one-liner and `--ca-pin` waive hostname checks (the token/pin is
+the identity), and when `--server-name` is an IP the bootstrap
+certificate carries an IP SAN so even `--ca` stock verification
+accepts it.
 
 ### 1.4 Bring up the WireGuard interface
 
@@ -254,13 +256,10 @@ uname -m                          # aarch64 → arm64 agent
 apt update && apt install -y wireguard-tools curl openssl
 ```
 
-Give the VM a **name** for the control server: the script and the
-agent both verify TLS hostnames against the server's `--server-name`
-(vps, §1.3), so a bare-IP URL fails. The simplest fix — a hosts entry:
-
-```sh
-echo "VPS_IP vps" | sudo tee -a /etc/hosts
-```
+No DNS setup needed: the one-liner works against a bare IP
+(`https://VPS_IP:8443`). If you prefer a name, a hosts entry
+(`echo "VPS_IP vps" | sudo tee -a /etc/hosts`) lets you enroll via
+`https://vps:8443`, which also satisfies `--ca`'s hostname check.
 
 ### 2.2 Issue a token (on the VPS)
 
@@ -277,18 +276,16 @@ included).
 ### 2.3 Enroll — the one-liner (preferred)
 
 `serve` exposes a bootstrap script at `GET|POST /enroll.sh` that does
-the whole host setup: download the right agent, verify the CA against
-your pin and the binary against its served digest, enroll, bring up
-WireGuard and install `claymod-agent.service`. One command, on the VM:
+the whole host setup: download the right agent, verify the binary
+against its served digest, enroll (the **token is the credential**),
+bring up WireGuard and install `claymod-agent.service`. One command,
+on the VM:
 
 ```sh
-CA_FINGERPRINT=<the "CA fingerprint" line from the serve log>
-
 # -k is required: the bootstrap certificate comes from claymod's
-# internal CA (no system trust store). The CA fingerprint you pass
-# IS the trust anchor: the script verifies the fetched ca.pem against
-# it before trusting anything else.
-curl -fsSLk -d "$CA_FINGERPRINT" https://vps:8443/enroll.sh \
+# internal CA (no system trust store). The one-time token IS the
+# credential in this flow; the transport itself is not pinned.
+curl -fsSLk https://VPS_IP:8443/enroll.sh \
   | sudo sh -s -- --token "$(ssh root@VPS_IP cat ~/token-web01)" \
                   --hostname web01
 ```
@@ -296,7 +293,7 @@ curl -fsSLk -d "$CA_FINGERPRINT" https://vps:8443/enroll.sh \
 That is everything: binary at `/usr/local/bin/claymod-agent`, identity
 in `/etc/claymod/`, tunnel up on `claymod0`, `claymod-agent.service`
 enabled and started. Options: `--skip-wg` (no tunnel yet), `--no-systemd`
-(binary only), `--server`/`--pin`/`--out-dir`/`--bin-dir` to override.
+(binary only), `--server`/`--out-dir`/`--bin-dir` to override.
 
 Three honest caveats (full treatment in
 [docs/security.md](security.md#one-liner-bootstrap)):
@@ -306,14 +303,16 @@ Three honest caveats (full treatment in
   lines — or use the fetch-first form (`curl … -o enroll.sh && less
   enroll.sh && sudo sh enroll.sh …`) from security.md.
 - The script runs as root and mutates the host before you read it; the
-  pin is what makes the run auditable.
+  token is what limits the blast radius (single-use, hostname-bound,
+  short TTL) — for an authenticated transport use the pinned manual
+  flow (§2.4).
 - The installed unit starts only the **agent**, not the tunnel: after a
   VM reboot the tunnel must be re-created first (see §2.5's note).
 
 Assertions you can make now:
 - reuse the token → the second run fails at the enroll step (single-use);
-- re-run with a wrong `CA_FINGERPRINT` → `SECURITY FAILURE: CA
-  fingerprint mismatch` before anything is installed.
+- re-run with a wrong token → the enroll step refuses before anything
+  is installed.
 
 ### 2.4 Manual enrollment (fallback)
 
@@ -330,7 +329,7 @@ curl -fsSL -O $BASE/claymod-agent-linux-<arch> -O $BASE/SHA256SUMS
 grep "claymod-agent-linux-<arch>$" SHA256SUMS | sha256sum -c -
 sudo install -m 0755 claymod-agent-linux-<arch> /usr/local/bin/claymod-agent
 # …or download over the pinned bootstrap channel (needs
-# --agent-bin-dir from §1.2; this is the air-gap flow):
+# --agent-bin-dir and the ca.pem from §1.3; this is the air-gap flow):
 curl --cacert ca.pem -o claymod-agent https://vps:8443/agent/linux/<arch>
 curl --cacert ca.pem https://vps:8443/agent/linux/<arch>.sha256
 sha256sum claymod-agent          # compare with the served digest
@@ -338,8 +337,9 @@ sudo install -m 0755 claymod-agent /usr/local/bin/claymod-agent
 ```
 
 (`ca.pem` here is `~/claymod-data/ca/ca.pem` from the VPS — copy it
-first. With the hosts entry from §2.1, `--connect-to` gymnastics are
-not needed; without it, add `--connect-to vps:8443:VPS_IP:8443`.)
+first. A bare-IP URL fails `--cacert` hostname verification; enroll via
+the `--server-name` DNS name (hosts entry from §2.1) or use
+`--connect-to vps:8443:VPS_IP:8443`.)
 
 **2.4b — enroll** (on the VM):
 
@@ -354,8 +354,7 @@ claymod-agent enroll \
 
 Files land in `/etc/claymod/` (`ca.pem`, `agent.pem`, `agent-key.pem`,
 `agent.yaml`, `wg-keys.json`, `wg-setup.json`). `--ca-pin` takes the
-same **CA fingerprint** as the one-liner (§1.3) — one pin for the whole
-deployment.
+**CA fingerprint** from §1.3 — one pin for the whole deployment.
 
 **2.4c — the tunnel** (on the VM):
 
@@ -508,7 +507,7 @@ tcpdump -ni any port 2323            # then run an apply in another shell
 
 ## Phase 4 — Proof checklist
 
-- [ ] one-liner: wrong `CA_FINGERPRINT` → `SECURITY FAILURE` before
+- [ ] one-liner: wrong or expired token → enrollment refused before
       anything is installed
 - [ ] token single-use: re-running the one-liner with the same token
       fails at the enroll step
@@ -527,11 +526,10 @@ tcpdump -ni any port 2323            # then run an apply in another shell
 
 | Symptom | Likely cause |
 |---|---|
-| one-liner or enroll: `fingerprint mismatch` | the pin is the **CA** fingerprint ("CA fingerprint (the pin: …)" line), not the TLS leaf's — compute it with `curl -fsSLk https://vps:8443/ca.pem \| openssl x509 -outform DER \| sha256sum` |
+| enroll: `fingerprint mismatch` (`--ca-pin`) | the pin is the **CA** fingerprint ("CA fingerprint (the pin for agent enroll …)" line), not the TLS leaf's — compute it with `curl -fsSLk https://vps:8443/ca.pem \| openssl x509 -outform DER \| sha256sum` |
 | `curl: (60) SSL certificate problem` fetching `/enroll.sh` | missing `-k`: the bootstrap cert is internal-CA-issued (see §2.3) |
 | one-liner exits 0 but nothing happened | `curl | sh` reports sh's exit code — a failed fetch looks like success; watch for the `==` progress lines (§2.3) |
-| one-liner: could not resolve `vps` | add the §2.1 hosts entry, or pass `--server https://<name>:8443` where `<name>` matches `--server-name` |
-| enroll hangs on a bare IP with `--ca` | the cert has no IP SAN (see §1.3) — use `--ca-pin` or a DNS name equal to `--server-name` |
+| one-liner: could not resolve `vps` | use the bare IP (`https://VPS_IP:8443`) directly, or add a §2.1 hosts entry, or pass `--server https://<name>:8443` |
 | agent dead after a VM reboot | the tunnel was not re-created — run `sudo claymod-agent wg-setup` (§2.5 reboot note) |
 | `wg show` empty on the VPS | no peer installed — check `serve` ran with `--wg-backend wgctrl` (not `fake`) and watch its log for the `wireguard configuration written` line |
 | tunnel up, agent unreachable | the agent listens on the overlay IP only; check `ss -tlnp | grep 2323` on the VM and that `agent.yaml` `listen` matches |

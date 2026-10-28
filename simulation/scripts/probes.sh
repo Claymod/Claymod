@@ -66,7 +66,8 @@ until probe --cert "$CERT" --key "$KEY" >/dev/null 2>&1; do
 done
 echo "== enrolled agent is reachable"
 
-# The CA fingerprint is the pin the /enroll.sh one-liner verifies.
+# The CA fingerprint is the pin for `enroll --ca-pin` (the one-liner is
+# token-only).
 sha256() {
   if command -v sha256sum >/dev/null 2>&1; then
     sha256sum "$1" | awk '{print $1}'

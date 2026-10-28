@@ -83,7 +83,9 @@ Three identity relationships, one CA:
 
 1. **Bootstrap (HTTPS)**: the control server presents a certificate
    issued by the internal CA; the enrolling host pins it (`--ca` bundle
-   or `--ca-pin` fingerprint). No TOFU.
+   or `--ca-pin` fingerprint) — no TOFU — or, in the `/enroll.sh`
+   one-liner, skips server authentication entirely: there the one-time
+   token is the sole credential (bearer model).
 2. **Framed protocol (mTLS)**: the control server dials agents. Both
    sides present certificates from the internal CA; agents are the TLS
    *servers* on the overlay (they listen), the control side is the

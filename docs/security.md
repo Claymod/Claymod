@@ -40,17 +40,20 @@ Not defended (by design, documented boundaries):
 
 The enrolling host pins the bootstrap server with **either** a CA bundle
 (`--ca`) or the CA fingerprint (`--ca-pin`, printed by
-`claymod serve` at startup). There is no trust-on-first-use mode: an
-unpinned enrollment is refused at the CLI.
+`claymod serve` at startup) — or explicitly opts out of server
+authentication with `--insecure-token-only` (the `/enroll.sh` one-liner
+mode: the one-time token is the sole credential, bearer model). The
+default is no trust-on-first-use: an enrollment without one of the
+three modes is refused at the CLI.
 
 The two pin modes differ in hostname handling, deliberately: `--ca`
 uses stock TLS verification (the server name must match the
-certificate's DNS SANs), while `--ca-pin` **waives the hostname check**
-— the pinned CA is the identity. This keeps bare-IP enrollment working
-(the bootstrap certificate is issued with `--server-name` DNS SANs
-only) without weakening authentication: the chain must still verify
-against the pinned CA, and appended certificates in a served bundle are
-never trusted (only the pinned block becomes a trust root).
+certificate's SANs — an IP-form `--server-name` becomes an IP SAN), while
+`--ca-pin` **waives the hostname check** — the pinned CA is the
+identity, so bare-IP enrollment works in both modes. Neither weakens
+authentication: the chain must still verify against the pinned CA, and
+appended certificates in a served bundle are never trusted (only the
+pinned block becomes a trust root).
 
 ```sh
 # hash the SERVED CA certificate — what --ca-pin compares against
@@ -77,8 +80,7 @@ the host — enrollment transmits only its public key.
 Tokens, private keys and certificate contents are never logged. The
 enrollment server logs hostname, remote address and outcome; `serve`
 prints the CA fingerprint (it is public by design — it is what you
-pin; one value authenticates both the curl | sh bootstrap and
-`--ca-pin` enrollment). Client certificate material is written only to the
+pin for `--ca-pin`/`--ca` enrollment). Client certificate material is written only to the
 files named above.
 
 ## Protocol hardening
@@ -104,37 +106,40 @@ reconnection with bounded retries, graceful shutdown.
 
 ## One-liner bootstrap
 
-`curl -fsSLk -d "$PIN" https://control:8443/enroll.sh | sudo sh` is a
+`curl -fsSLk https://control:8443/enroll.sh | sudo sh` is a
 convenience for bulk enrollment. The `-k` is required: the bootstrap
 certificate comes from claymod's internal CA, so a fresh host cannot
-verify it against any system trust store — the pin you pass IS the
-trust anchor (the script verifies the fetched CA against it before
-anything else). Its security model and honest caveats:
+verify it against any system trust store. The script takes no pin: the
+**one-time enrollment token is the sole credential** (bearer model) —
+proof that you know the control server. Its security model and honest
+caveats:
 
-**What it guarantees.** The pin you pass is the SHA-256 fingerprint of
-the CA certificate — the trust anchor for everything claymod issues. The
-script fetches the CA bundle over an *untrusted* channel and verifies it
-against the pin before trusting a single byte (classic pinned-download
-model, same as `--ca-pin` for `claymod-agent enroll`). Every subsequent
-download rides the verified channel and is digest-checked against the
-served SHA-256. The enrollment token is the access credential and is
-**never embedded in a served script** — it is passed at run time and
-burned on the hostname you name. A wrong pin aborts before any
-installation; a swapped agent binary fails the digest check.
+**What it guarantees.** The token is single-use, bound to the hostname
+you pass and short-lived (TTL set at `claymod host token` time) — and it
+is **never embedded in a served script**: it is passed at run time and
+burned on the hostname you name. The agent binary is digest-checked
+against the served SHA-256; a swapped or corrupted binary fails before
+enrollment. Enrollment itself is authenticated by the token, and the
+resulting identity material rides the response to the legitimate caller
+only.
 
 **What it cannot guarantee — the honest `curl | sh` caveats.**
 - *The pipeline hides curl's failure.* `curl | sh` reports `sh`'s exit
   code: if the fetch fails, `sh` runs on empty input and exits 0. Use
   the fetch-first form below, or at least watch the output.
-- *The script runs with root and executes before you read it.* If the
-  pin is wrong or the attacker already controls the channel AND you
-  didn't pin, whatever is piped runs. Pinning is what makes this
-  auditable: fetch the script first, read it, then run —
-  `curl -fsSLk -d "$PIN" …/enroll.sh -o enroll.sh && less enroll.sh &&
+- *The script runs with root and executes before you read it.* Whatever
+  is piped runs; fetch the script first, read it, then run —
+  `curl -fsSLk …/enroll.sh -o enroll.sh && less enroll.sh &&
   sudo sh enroll.sh --token … --hostname …` is the cautious form.
-- *Trust is as good as the pin's distribution.* Publish the CA
-  fingerprint over a channel the attacker doesn't control (your runbook,
-  an SSH session, the console). `claymod serve` prints it at startup.
+- *The transport is not authenticated in this flow.* A MITM who controls
+  the channel can steal the token in flight (a bearer credential) and
+  burn it on the same hostname before you do — and serve you a modified
+  script, though enrollment itself would fail against the real server
+  with a stolen-but-consumed token. When the network is untrusted, use
+  the pinned manual flow instead: `claymod-agent enroll --ca-pin <CA
+  fingerprint>` (chain-verified, hostname waived) or `--ca <bundle>`
+  (stock TLS verification). `claymod serve` prints the CA fingerprint
+  at startup.
 - *The script mutates the host* (binary, systemd unit, WireGuard). Use
   `--no-systemd` and `--skip-wg` to stage only, or the manual enrollment
   path entirely.
@@ -147,12 +152,12 @@ installation; a swapped agent binary fails the digest check.
 The host agent is a **separate small static binary** (`claymod-agent`,
 ~7 MB) with a light dependency closure (no database, no PKL tooling, no
 wgctrl). It can be served by the control server itself
-(`GET /agent/{goos}/{goarch}` on the pinned bootstrap channel) for
-air-gapped hosts. The binary carries no secrets; integrity comes from
-SHA-256 digests — logged by `serve` at startup and served as a `.sha256`
-sidecar for comparison on the host. Pinning the channel (CA bundle /
-fingerprint) is what authenticates the download; the digest guards
-against a corrupted or swapped file.
+(`GET /agent/{goos}/{goarch}` on the bootstrap channel) for air-gapped
+hosts. The binary carries no secrets; integrity comes from SHA-256
+digests — logged by `serve` at startup and served as a `.sha256` sidecar
+for comparison on the host. A pinned channel (CA bundle / fingerprint,
+manual flows) authenticates the download; in the token-only one-liner
+the digest guards against a corrupted or swapped file.
 
 ## Dependency footprint
 

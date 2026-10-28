@@ -52,14 +52,18 @@ subcommands, so it works too — hosts just don't need its weight.
 
 Trust is **pinned**: either `--ca <bundle.pem>` (CA bundle) or
 `--ca-pin <hex>` (the CA fingerprint, printed by the server on
-startup as "CA fingerprint (the pin: /enroll.sh and --ca-pin)"). Both
-pin modes verify the served `/ca.pem` bundle against exactly this
+startup as "CA fingerprint (the pin for agent enroll --ca-pin/--ca)").
+Both pin modes verify the served `/ca.pem` bundle against exactly this
 value — one pin for the whole deployment. The two differ in hostname
 handling: `--ca` performs stock TLS hostname verification (enroll via
-the `--server-name` DNS name), while `--ca-pin` waives it — the pinned
-CA *is* the identity, so enrolling against a bare IP works too (the
-bootstrap certificate carries DNS SANs only). It can also be computed
-with:
+the `--server-name` DNS name or IP), while `--ca-pin` waives it — the
+pinned CA *is* the identity, so enrolling against a bare IP works with
+either mode (the bootstrap certificate carries an IP SAN when
+`--server-name` is an IP). A third mode, `--insecure-token-only`, skips
+server authentication entirely — the one-time token is the sole
+credential; it is what the `/enroll.sh` one-liner uses (§below) and is
+mutually exclusive with `--ca`/`--ca-pin`. The fingerprint can also be
+computed with:
 
 ```sh
 # hash the SERVED CA certificate (what --ca-pin compares against),
@@ -85,41 +89,38 @@ For bulk or remote enrollment, `claymod serve` serves a generated
 bootstrap script at `GET|POST /enroll.sh`:
 
 ```sh
-# CA_FINGERPRINT is printed by `claymod serve` at startup:
-#   CA fingerprint (the pin: /enroll.sh and --ca-pin):
-#     <64 hex chars>
 # The -k is required: the bootstrap certificate comes from claymod's
-# internal CA — the fingerprint you pass IS the trust anchor.
-curl -fsSLk -d "$CA_FINGERPRINT" https://control:8443/enroll.sh \
+# internal CA (no system trust store). The one-time TOKEN is the
+# credential here — the transport is not pinned in this flow.
+curl -fsSLk https://control:8443/enroll.sh \
   | sudo sh -s -- --token <TOKEN> --hostname web01
 ```
 
-Use a URL whose host name matches the server's `--server-name` (the
-script's own downloads verify the hostname against the pinned CA;
-resolve it via DNS or a hosts entry, or pass `--server` to the script to
-override the URL baked into it). Note the pipeline reports `sh`'s exit
+The token is the proof that you know the control server: single-use,
+bound to the hostname, TTL'd. A bare-IP URL
+(`https://51.38.34.49:8443`) works — no DNS name or hosts entry needed
+(and when `--server-name` *is* an IP, the bootstrap certificate carries
+an IP SAN, so even pinned flows accept it). Note the pipeline reports `sh`'s exit
 code, not curl's: if the fetch fails, `sh` silently succeeds on empty
 input — check the output, or use the cautious fetch-first form in
 [docs/security.md](security.md#one-liner-bootstrap).
 
 What the script does, in order, failing closed at every step:
 
-1. fetches the CA bundle over an untrusted channel and **verifies it
-   against your pinned fingerprint** (this is the trust anchor — the
-   transport itself is untrusted on purpose);
-2. downloads `claymod-agent` for this platform from
-   `GET /agent/{goos}/{goarch}` over the now-verified channel;
-3. checks the agent binary against its served SHA-256 digest;
-4. enrolls (single-use token, WireGuard key generated locally);
-5. runs `claymod-agent wg-setup` (the one root-only step);
-6. installs `/usr/local/bin/claymod-agent` plus a **systemd unit**
+1. downloads `claymod-agent` for this platform from
+   `GET /agent/{goos}/{goarch}` (transport unauthenticated — the token
+   is the credential);
+2. checks the agent binary against its served SHA-256 digest;
+3. enrolls (single-use token, WireGuard key generated locally);
+4. runs `claymod-agent wg-setup` (the one root-only step);
+5. installs `/usr/local/bin/claymod-agent` plus a **systemd unit**
    (`claymod-agent.service`, `Restart=always`, `enable --now`) so the
    agent survives reboots. Note the unit starts only the agent: after a
    host reboot the WireGuard tunnel must be re-created first
    (`claymod-agent wg-setup`, or your own wg-quick unit) before the
    agent can be reached again.
 
-Options: `--server`, `--pin`, `--out-dir`, `--bin-dir`, `--skip-wg`
+Options: `--server`, `--out-dir`, `--bin-dir`, `--skip-wg`
 (skip WireGuard bring-up), `--no-systemd` (install the binary only).
 The script is POSIX sh and runs on any Linux; on macOS use
 `--no-systemd` (no systemd) and `--skip-wg` unless you run as root.
@@ -130,7 +131,8 @@ Security properties and the inherent `curl | sh` caveats:
 ### Air-gapped bootstrap: the agent binary comes from the server
 
 Hosts need only `curl` and the pinned CA bundle (or the server cert
-fingerprint). Everything else flows over the one pinned TLS channel:
+fingerprint, for the `--ca-pin` mode). Everything else flows over the
+one TLS channel:
 
 ```sh
 # on the host, with ca.pem in hand:
@@ -234,8 +236,9 @@ simulation/run.sh --local  # loopback, no Docker
 
 - The bootstrap endpoint is HTTPS-only (TLS 1.3). A token sent over plain
   HTTP is never accepted: there is no plaintext listener.
-- Enrollment requires a valid token, matching hostname and a pinned
-  server identity (`--ca`/`--ca-pin`) — TOFU is not offered.
+- Enrollment requires a valid token, a matching hostname and an
+  explicit trust mode: `--ca`/`--ca-pin` (pinned server identity) or
+  `--insecure-token-only` (token as sole credential).
 - The agent's WireGuard private key is generated on the host and is never
   transmitted; the mTLS keypair is transmitted exactly once, over TLS.
 - `Command` ops run with the agent's privileges and are documented as the
