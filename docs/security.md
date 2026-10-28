@@ -90,6 +90,39 @@ revoke on any host decommission, and treat `claymod-data/` backups as
 key material. Planned hardening (Phase 9+): connection limits,
 reconnection with bounded retries, graceful shutdown.
 
+## One-liner bootstrap
+
+`curl -fsSL -d "$PIN" https://control:8443/enroll.sh | sudo sh` is a
+convenience for bulk enrollment. Its security model and honest caveats:
+
+**What it guarantees.** The pin you pass is the SHA-256 fingerprint of
+the CA certificate — the trust anchor for everything claymod issues. The
+script fetches the CA bundle over an *untrusted* channel and verifies it
+against the pin before trusting a single byte (classic pinned-download
+model, same as `--ca-pin` for `claymod-agent enroll`). Every subsequent
+download rides the verified channel and is digest-checked against the
+served SHA-256. The enrollment token is the access credential and is
+**never embedded in a served script** — it is passed at run time and
+burned on the hostname you name. A wrong pin aborts before any
+installation; a swapped agent binary fails the digest check.
+
+**What it cannot guarantee — the honest `curl | sh` caveats.**
+- *The script runs with root and executes before you read it.* If the
+  pin is wrong or the attacker already controls the channel AND you
+  didn't pin, whatever is piped runs. Pinning is what makes this
+  auditable: fetch the script first, read it, then run —
+  `curl -fsSL -d "$PIN" …/enroll.sh -o enroll.sh && less enroll.sh &&
+  sudo sh enroll.sh --token … --hostname …` is the cautious form.
+- *Trust is as good as the pin's distribution.* Publish the CA
+  fingerprint over a channel the attacker doesn't control (your runbook,
+  an SSH session, the console). `claymod serve` prints it at startup.
+- *The script mutates the host* (binary, systemd unit, WireGuard). Use
+  `--no-systemd` and `--skip-wg` to stage only, or the manual enrollment
+  path entirely.
+- *Not a substitute for review in high-assurance environments* — there
+  the manual path (`claymod-agent enroll` + your own config management)
+  remains the recommended route.
+
 ## Agent binary distribution
 
 The host agent is a **separate small static binary** (`claymod-agent`,

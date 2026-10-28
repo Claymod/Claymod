@@ -80,6 +80,26 @@ The digest is also printed by `claymod serve` at startup for
 out-of-band verification. Nothing else needs to reach the host: the
 entire bootstrap path is the one pinned TLS channel.
 
+### One-liner enroll (curl | sh)
+
+`claymod serve` also serves a bootstrap script that does the whole host
+setup — download the right agent, verify it, enroll, bring up
+WireGuard and install a systemd unit:
+
+```sh
+# the CA fingerprint is printed by `claymod serve` at startup
+curl -fsSL -d "$CA_FINGERPRINT" https://control:8443/enroll.sh \
+  | sudo sh -s -- --token <TOKEN> --hostname web01
+```
+
+The pin you pass authenticates the whole run: the script fetches the CA
+bundle over an untrusted channel *and verifies it against your pin*
+before anything else is trusted. The token is the access credential and
+is never embedded in a served script — whoever holds it decides which
+host name it is burned on. Caveats of `curl | sh` are spelled out in
+[docs/security.md](docs/security.md#one-liner-bootstrap); the manual
+enrollment path below is always available.
+
 ## Quickstart (loopback, ~2 minutes)
 
 Everything below runs on one machine against loopback — no root, no

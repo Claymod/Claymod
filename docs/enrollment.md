@@ -71,6 +71,41 @@ openssl s_client -connect claymod.internal:8443 -servername claymod.internal </d
 | `wg-keys.json` | WireGuard key pair (generated locally) | 0600 |
 | `wg-setup.json` | everything `wg-setup` needs to bring up the tunnel | 0600 |
 
+### One-liner bootstrap (curl | sh)
+
+For bulk or remote enrollment, `claymod serve` serves a generated
+bootstrap script at `GET|POST /enroll.sh`:
+
+```sh
+# CA_FINGERPRINT is printed by `claymod serve` at startup:
+#   CA fingerprint (pin for the curl | sh bootstrap):
+#     <64 hex chars>
+curl -fsSL -d "$CA_FINGERPRINT" https://control:8443/enroll.sh \
+  | sudo sh -s -- --token <TOKEN> --hostname web01
+```
+
+What the script does, in order, failing closed at every step:
+
+1. fetches the CA bundle over an untrusted channel and **verifies it
+   against your pinned fingerprint** (this is the trust anchor — the
+   transport itself is untrusted on purpose);
+2. downloads `claymod-agent` for this platform from
+   `GET /agent/{goos}/{goarch}` over the now-verified channel;
+3. checks the agent binary against its served SHA-256 digest;
+4. enrolls (single-use token, WireGuard key generated locally);
+5. runs `claymod-agent wg-setup` (the one root-only step);
+6. installs `/usr/local/bin/claymod-agent` plus a **systemd unit**
+   (`claymod-agent.service`, `Restart=always`, `enable --now`) so the
+   agent survives reboots.
+
+Options: `--server`, `--pin`, `--out-dir`, `--bin-dir`, `--skip-wg`
+(skip WireGuard bring-up), `--no-systemd` (install the binary only).
+The script is POSIX sh and runs on any Linux; on macOS use
+`--no-systemd` (no systemd) and `--skip-wg` unless you run as root.
+
+Security properties and the inherent `curl | sh` caveats:
+[docs/security.md](security.md#one-liner-bootstrap).
+
 ### Air-gapped bootstrap: the agent binary comes from the server
 
 Hosts need only `curl` and the pinned CA bundle (or the server cert
