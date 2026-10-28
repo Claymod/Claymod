@@ -205,7 +205,7 @@ func runServe(ctx context.Context, cmd *cobra.Command, o serveOptions) error {
 			"CA fingerprint (pin for the curl | sh bootstrap):\n  %s\n",
 			hex.EncodeToString(sum[:]))
 		fmt.Fprintf(out,
-			"one-liner enroll for hosts:\n  curl -fsSL -d %s \\\n    https://<control-host>:8443/enroll.sh | sudo sh -s -- --token <token> --hostname <name>\n",
+			"one-liner enroll for hosts:\n  curl -fsSLk -d %s \\\n    https://<control-host>:8443/enroll.sh | sudo sh -s -- --token <token> --hostname <name>\n",
 			hex.EncodeToString(sum[:]))
 	}
 

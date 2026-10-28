@@ -24,7 +24,7 @@ var fingerprintHex = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // handleEnrollScript serves the one-shot bootstrap script:
 //
-//	curl -fsSL -d "<CA_FINGERPRINT>" https://control:8443/enroll.sh | sudo sh -s -- \
+//	curl -fsSLk -d "<CA_FINGERPRINT>" https://control:8443/enroll.sh | sudo sh -s -- \
 //	    --token TOKEN --hostname web01
 //
 // POST body (or GET ?pin=) is the expected CA fingerprint; the script
@@ -87,8 +87,10 @@ const enrollScriptTemplate = `#!/bin/sh
 # served SHA-256, enrolls, brings up WireGuard and installs a systemd
 # unit so the agent survives reboots.
 #
-#   curl -fsSL -d "<CA_FINGERPRINT>" __SERVER__/enroll.sh | sudo sh -s -- \
+#   curl -fsSLk -d "<CA_FINGERPRINT>" __SERVER__/enroll.sh | sudo sh -s -- \
 #       --token TOKEN --hostname web01
+# (the -k is required: the bootstrap certificate comes from claymod's
+#  internal CA. The fingerprint you pass IS the trust anchor.)
 #
 # Requires root and the enrollment token (ask your operator). The token
 # is the access credential; the fingerprint authenticates everything
