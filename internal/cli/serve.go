@@ -198,16 +198,6 @@ func runServe(ctx context.Context, cmd *cobra.Command, o serveOptions) error {
 			"one-liner enroll for hosts:\n  curl -fsSLk -d %s \\\n    https://<control-host>:8443/enroll.sh | sudo sh -s -- --token <token> --hostname <name>\n",
 			fp)
 	}
-	caDer := st.CA.CertPEM()
-	if block, _ := pem.Decode(caDer); block != nil {
-		sum := sha256.Sum256(block.Bytes)
-		fmt.Fprintf(out,
-			"CA fingerprint (pin for the curl | sh bootstrap):\n  %s\n",
-			hex.EncodeToString(sum[:]))
-		fmt.Fprintf(out,
-			"one-liner enroll for hosts:\n  curl -fsSLk -d %s \\\n    https://<control-host>:8443/enroll.sh | sudo sh -s -- --token <token> --hostname <name>\n",
-			hex.EncodeToString(sum[:]))
-	}
 
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
