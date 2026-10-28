@@ -254,10 +254,14 @@ rsync -av bin/agents/claymod-agent-linux-<arch> <vm>:/usr/local/bin/claymod-agen
 
 # (b) download over the pinned bootstrap channel (if you added
 #     --agent-bin-dir in §1.2) — this is also the air-gap flow:
-#   on the VM, with the server's ca.pem in hand:
-curl --cacert ca.pem -o claymod-agent \
-  https://VPS_IP:8443/agent/linux/<arch>
-curl --cacert ca.pem https://VPS_IP:8443/agent/linux/<arch>.sha256
+#   on the VM, with the server's ca.pem in hand. The bootstrap cert's
+#   only DNS SAN is `--server-name` (vps, see §1.3), so a bare-IP URL
+#   fails hostname verification: use --connect-to to reach VPS_IP while
+#   verifying the name `vps` (or add a hosts entry for vps).
+curl --cacert ca.pem --connect-to vps:8443:VPS_IP:8443 -o claymod-agent \
+  https://vps:8443/agent/linux/<arch>
+curl --cacert ca.pem --connect-to vps:8443:VPS_IP:8443 \
+  https://vps:8443/agent/linux/<arch>.sha256
 sha256sum claymod-agent          # compare with the served digest
 sudo install -m 0755 claymod-agent /usr/local/bin/claymod-agent
 ```
