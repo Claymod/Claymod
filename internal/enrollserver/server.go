@@ -53,6 +53,8 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /enroll", s.handleEnroll)
 	mux.HandleFunc("GET /agent/", s.handleAgentDownload)
+	mux.HandleFunc("/ca.pem", s.handleCA)
+	mux.HandleFunc("/enroll.sh", s.handleEnrollScript)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})

@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/pem"
 	"fmt"
 	"net"
 	"net/http"
@@ -183,12 +184,27 @@ func runServe(ctx context.Context, cmd *cobra.Command, o serveOptions) error {
 	}
 	log.Info("bootstrap endpoint listening (https)",
 		"addr", o.bootstrapAddr, "server_name", o.serverName)
-	// Print the certificate fingerprint: enroll clients pin it with
-	// --ca-pin (see docs/enrollment.md).
+	// Two distinct trust anchors, both printed for pinning:
+	//
+	//	- the bootstrap leaf certificate: --ca-pin for
+	//	  `claymod-agent enroll` / `claymod probe`;
+	//	- the CA certificate: the pin the /enroll.sh one-liner
+	//	  verifies the whole bootstrap against.
+	out := cmd.OutOrStdout()
 	if leaf := st.ServerID.Certificate.Certificate; len(leaf) > 0 {
 		sum := sha256.Sum256(leaf[0])
-		fmt.Fprintf(cmd.OutOrStdout(),
+		fmt.Fprintf(out,
 			"bootstrap certificate fingerprint (pin with --ca-pin):\n  %s\n",
+			hex.EncodeToString(sum[:]))
+	}
+	caDer := st.CA.CertPEM()
+	if block, _ := pem.Decode(caDer); block != nil {
+		sum := sha256.Sum256(block.Bytes)
+		fmt.Fprintf(out,
+			"CA fingerprint (pin for the curl | sh bootstrap):\n  %s\n",
+			hex.EncodeToString(sum[:]))
+		fmt.Fprintf(out,
+			"one-liner enroll for hosts:\n  curl -fsSL -d %s \\\n    https://<control-host>:8443/enroll.sh | sudo sh -s -- --token <token> --hostname <name>\n",
 			hex.EncodeToString(sum[:]))
 	}
 
