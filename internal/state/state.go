@@ -6,8 +6,11 @@ package state
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/claymod/claymod/internal/ca"
 	"github.com/claymod/claymod/internal/proto"
@@ -63,19 +66,20 @@ func Open(dir, serverName string) (*State, error) {
 	}
 	s.CA = authority
 
-	// Server identity: load or issue.
+	// Server identity: load or issue. Re-issued when the stored
+	// certificate no longer matches serverName (e.g. the operator
+	// changed --server-name, or moved between a DNS name and a bare IP):
+	// agents verify the bootstrap endpoint by this name, so a stale
+	// certificate would break enrollment. The CA is untouched — its
+	// fingerprint (the agents' pin) stays stable.
 	certPath := filepath.Join(dir, serverCert)
 	keyPath := filepath.Join(dir, serverKey)
 	certPEM, certErr := os.ReadFile(certPath)
 	keyPEM, keyErr := os.ReadFile(keyPath)
-	if certErr != nil || keyErr != nil {
-		certPEM, keyPEM, err = authority.IssueCert(ca.IssueOptions{
-			CommonName: serverName,
-			Usage:      ca.UsageServer,
-			DNSNames:   []string{serverName, "localhost"},
-		})
+	if certErr != nil || keyErr != nil || !serverCertMatches(certPEM, serverName) {
+		certPEM, keyPEM, err = issueServerCert(authority, serverName)
 		if err != nil {
-			return nil, fmt.Errorf("state: issue server certificate: %w", err)
+			return nil, err
 		}
 		if err := os.WriteFile(certPath, certPEM, 0o644); err != nil {
 			return nil, err
@@ -136,4 +140,54 @@ func Open(dir, serverName string) (*State, error) {
 		}
 	}
 	return s, nil
+}
+
+// issueServerCert issues the bootstrap server's leaf certificate. An
+// IP-form serverName becomes an IP SAN (curl and Go verify IP targets
+// against IPAddresses, and ignore a DNS SAN that merely looks like an
+// IP); a DNS name lands in DNSNames alongside localhost.
+func issueServerCert(authority *ca.CA, serverName string) (certPEM, keyPEM []byte, err error) {
+	opts := ca.IssueOptions{
+		CommonName: serverName,
+		Usage:      ca.UsageServer,
+		DNSNames:   []string{"localhost"},
+	}
+	if netIP := net.ParseIP(serverName); netIP != nil {
+		opts.IPAddresses = []net.IP{netIP}
+	} else {
+		opts.DNSNames = append([]string{serverName}, opts.DNSNames...)
+	}
+	certPEM, keyPEM, err = authority.IssueCert(opts)
+	if err != nil {
+		return nil, nil, fmt.Errorf("state: issue server certificate: %w", err)
+	}
+	return certPEM, keyPEM, nil
+}
+
+// serverCertMatches reports whether the stored server certificate still
+// covers serverName (and is currently valid). A non-parsing certificate
+// counts as mismatched so it gets re-issued.
+func serverCertMatches(certPEM []byte, serverName string) bool {
+	cert, err := ca.ParseCertPEM(certPEM)
+	if err != nil {
+		return false
+	}
+	now := time.Now()
+	if now.Before(cert.NotBefore) || now.After(cert.NotAfter) {
+		return false
+	}
+	if netIP := net.ParseIP(serverName); netIP != nil {
+		for _, certIP := range cert.IPAddresses {
+			if certIP.Equal(netIP) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, name := range cert.DNSNames {
+		if strings.EqualFold(name, serverName) {
+			return true
+		}
+	}
+	return false
 }
