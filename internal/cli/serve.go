@@ -73,7 +73,7 @@ over the WireGuard overlay.`,
 	cmd.Flags().StringVar(&wgEndpoint, "wg-endpoint", "127.0.0.1:51821", "WireGuard endpoint agents connect to (host:port)")
 	cmd.Flags().IntVar(&wgListenPort, "wg-port", 51821, "WireGuard UDP listen port (written to the generated config)")
 	cmd.Flags().StringVar(&agentBinDir, "agent-bin-dir", "", "directory of claymod-agent binaries to serve at /agent/{goos}/{goarch} (default: <data-dir>/agents)")
-	cmd.Flags().BoolVar(&manageInterface, "manage-interface", false, "create/refresh the WireGuard interface (needs CAP_NET_ADMIN; peers via wgctrl)")
+	cmd.Flags().BoolVar(&manageInterface, "manage-interface", true, "create/refresh the WireGuard interface at startup (needs CAP_NET_ADMIN); --manage-interface=false to drive wg-quick yourself")
 	cmd.Flags().StringVar(&wgBackendMode, "wg-backend", "wgctrl", "WireGuard backend: wgctrl (real, needs root) or fake (testing)")
 	cmd.Flags().StringVar(&serverName, "server-name", "claymod", "CN/SAN on the bootstrap server certificate (agents pin it)")
 	return cmd
@@ -148,13 +148,19 @@ func runServe(ctx context.Context, cmd *cobra.Command, o serveOptions) error {
 	}
 	log.Info("wireguard configuration written", "path", wgMgr.ConfPath, "peers", len(peers))
 
-	if o.manageInterface {
+	switch {
+	case o.wgBackendMode == "fake":
+		// Testing mode: there is no real WireGuard interface to
+		// manage (the README loopback demo and the simulation run
+		// without CAP_NET_ADMIN).
+		log.Info("wireguard interface not managed (fake backend)")
+	case o.manageInterface:
 		if err := wgmgr.EnsureInterface(wgMgr.ConfConfig()); err != nil {
 			return fmt.Errorf("manage-interface: %w", err)
 		}
 		log.Info("wireguard interface ensured", "interface", o.wgInterface)
-	} else {
-		log.Info("wireguard interface is operator-managed (apply the generated config with wg-quick / wg syncconf)")
+	default:
+		log.Info("wireguard interface is operator-managed (--manage-interface=false; apply the generated config with wg-quick / wg syncconf)")
 	}
 
 	agentDir := o.agentBinDir
