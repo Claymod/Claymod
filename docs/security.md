@@ -44,7 +44,9 @@ The enrolling host pins the bootstrap server with **either** a CA bundle
 unpinned enrollment is refused at the CLI.
 
 ```sh
-openssl s_client -connect control:8443 -servername control </dev/null 2>/dev/null \
+# hash the SERVED CA certificate — what --ca-pin compares against
+# (the TLS leaf the handshake presents is not the pin):
+curl -fsSLk https://control:8443/ca.pem \
   | openssl x509 -outform DER | shasum -a 256
 ```
 

@@ -58,7 +58,9 @@ value — one pin for the whole deployment. It can also be computed
 with:
 
 ```sh
-openssl s_client -connect claymod.internal:8443 -servername claymod.internal </dev/null 2>/dev/null \
+# hash the SERVED CA certificate (what --ca-pin compares against),
+# not the TLS leaf the server presents in the handshake:
+curl -fsSLk https://claymod.internal:8443/ca.pem \
   | openssl x509 -outform DER | shasum -a 256
 ```
 

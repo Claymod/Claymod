@@ -142,6 +142,142 @@ Copy it: the preferred one-liner (§2.3) and manual `enroll --ca-pin`
 (§2.4) both verify the served `/ca.pem` bundle against exactly this
 value. `serve` also prints the ready-made one-liner command.
 
+The same startup also writes `~/claymod-data/claymod0.conf` and logs
+`wireguard configuration written … peers N` — that file is what you
+apply with `wg-quick`/`wg syncconf` (§1.4), and it is regenerated on
+every enrollment change.
+
+Enrollment via a bare IP (`https://VPS_IP:8443`) does **not** work with
+`--ca` (the cert has DNS SANs only, no IP SAN — Go's verifier rejects
+the hostname). Use `--ca-pin <fingerprint>` on the VM, exactly as in
+Phase 2. (`--ca` works if you enroll via a DNS name that equals
+`--server-name`.)
+
+### 1.4 Bring up the WireGuard interface
+
+`serve` does the configuration work for you: it installs peers on
+`claymod0` via wgctrl as hosts enroll/revoke, **re-syncs every peer from
+the inventory at startup**, and maintains a wg-quick config at
+`~/claymod-data/claymod0.conf` (0600 — it contains the server's private
+key), regenerated on every enroll/revoke and restart.
+
+Two ways to bring the interface up — pick one:
+
+**Operator-managed (default; claymod never touches the interface):**
+
+```sh
+wg-quick up ~/claymod-data/claymod0.conf        # first time
+# on later changes (enroll/revoke), apply the update without downtime:
+wg syncconf claymod0 <(wg-quick strip ~/claymod-data/claymod0.conf)
+```
+
+**Let claymod manage the interface (root, one flag):**
+
+```sh
+claymod serve ... --manage-interface
+```
+
+`--manage-interface` creates the interface if missing, assigns the
+overlay address, private key and listen port at startup (needs
+`CAP_NET_ADMIN`); peers are still synced via wgctrl.
+
+Either way, verify: `wg show` lists `claymod0` listening on **51821**
+(not 51820 — claymod deliberately avoids the standard port so it never
+collides with your own tunnels).
+
+### 1.5 Keep it running: systemd unit
+
+One unit is enough — `serve` itself re-syncs all peers from the
+inventory at startup and (with `--manage-interface`) recreates the
+interface, so a plain restart of the server restores the whole overlay.
+
+`/etc/systemd/system/claymod-serve.service` (operator-managed variant;
+add `--manage-interface` if claymod should own the interface):
+
+```ini
+[Unit]
+Description=claymod control server
+After=network-online.target wg-quick@claymod0.service
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/claymod serve --data-dir /root/claymod-data --bootstrap-listen 0.0.0.0:8443 --server-name vps --wg-interface claymod0 --wg-endpoint VPS_IP:51821 --agent-network 10.42.0.0/24 --wg-backend wgctrl
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```sh
+systemctl daemon-reload
+systemctl enable --now claymod-serve
+systemctl status claymod-serve
+```
+
+With `--manage-interface`, drop the `After=wg-quick@…` line: claymod
+brings the interface up itself on every start.
+
+### 1.6 Reboot behaviour
+
+No manual peer surgery needed any more: on every start `serve` reads the
+inventory (the source of truth) and re-installs all peers on `claymod0`
+via wgctrl, then rewrites `claymod0.conf`. Agents initiate the tunnel
+with `persistent-keepalive 25`, so as soon as the server is back — and
+the interface exists — handshakes resume automatically.
+
+The only boot decision is **who creates the interface**:
+
+- `--manage-interface`: nothing to do; `serve` recreates it at startup.
+- operator-managed: `wg-quick@claymod0.service` reads
+  `/etc/wireguard/claymod0.conf`, so link the generated file there once
+  and enable the unit — after that it always boots current, because
+  `serve` keeps the file up to date:
+  ```sh
+  ln -s ~/claymod-data/claymod0.conf /etc/wireguard/claymod0.conf
+  systemctl enable wg-quick@claymod0
+  ```
+
+## Phase 2 — Enroll the Debian VM
+
+### 2.1 Prepare the VM
+
+```sh
+ssh <vm>
+uname -m                          # aarch64 → arm64 agent
+apt update && apt install -y wireguard-tools curl openssl
+```
+
+Give the VM a **name** for the control server: the script and the
+agent both verify TLS hostnames against the server's `--server-name`
+(vps, §1.3), so a bare-IP URL fails. The simplest fix — a hosts entry:
+
+```sh
+echo "VPS_IP vps" | sudo tee -a /etc/hosts
+```
+
+### 2.2 Issue a token (on the VPS)
+
+```sh
+claymod host token web01 --data-dir ~/claymod-data --ttl 15m \
+  --token-file ~/token-web01
+```
+
+This prints the token and writes it to `~/token-web01` (single-use,
+bound to the name `web01`, valid 15 minutes). It also prints the exact
+one-liner to run on the host (with the CA pin and the required `-k`
+included).
+
+### 2.3 Enroll — the one-liner (preferred)
+
+`serve` exposes a bootstrap script at `GET|POST /enroll.sh` that does
+the whole host setup: download the right agent, verify the CA against
+your pin and the binary against its served digest, enroll, bring up
+WireGuard and install `claymod-agent.service`. One command, on the VM:
+
+```sh
+CA_FINGERPRINT=<the "CA fingerprint" line from the serve log>
+
 # -k is required: the bootstrap certificate comes from claymod's
 # internal CA (no system trust store). The CA fingerprint you pass
 # IS the trust anchor: the script verifies the fetched ca.pem against
