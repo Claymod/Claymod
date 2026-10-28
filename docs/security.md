@@ -43,6 +43,15 @@ The enrolling host pins the bootstrap server with **either** a CA bundle
 `claymod serve` at startup). There is no trust-on-first-use mode: an
 unpinned enrollment is refused at the CLI.
 
+The two pin modes differ in hostname handling, deliberately: `--ca`
+uses stock TLS verification (the server name must match the
+certificate's DNS SANs), while `--ca-pin` **waives the hostname check**
+— the pinned CA is the identity. This keeps bare-IP enrollment working
+(the bootstrap certificate is issued with `--server-name` DNS SANs
+only) without weakening authentication: the chain must still verify
+against the pinned CA, and appended certificates in a served bundle are
+never trusted (only the pinned block becomes a trust root).
+
 ```sh
 # hash the SERVED CA certificate — what --ca-pin compares against
 # (the TLS leaf the handshake presents is not the pin):

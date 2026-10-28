@@ -54,7 +54,11 @@ Trust is **pinned**: either `--ca <bundle.pem>` (CA bundle) or
 `--ca-pin <hex>` (the CA fingerprint, printed by the server on
 startup as "CA fingerprint (the pin: /enroll.sh and --ca-pin)"). Both
 pin modes verify the served `/ca.pem` bundle against exactly this
-value — one pin for the whole deployment. It can also be computed
+value — one pin for the whole deployment. The two differ in hostname
+handling: `--ca` performs stock TLS hostname verification (enroll via
+the `--server-name` DNS name), while `--ca-pin` waives it — the pinned
+CA *is* the identity, so enrolling against a bare IP works too (the
+bootstrap certificate carries DNS SANs only). It can also be computed
 with:
 
 ```sh
