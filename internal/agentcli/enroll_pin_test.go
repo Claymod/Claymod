@@ -5,30 +5,31 @@ import (
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/pem"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/claymod/claymod/internal/ca"
+	"github.com/claymod/claymod/internal/enroll"
 )
 
 // spinCA serves /ca.pem (plus a dummy /enroll) over TLS with a throwaway
 // CA — exactly what a real control server exposes to a pinning client.
-func spinCA(t *testing.T) (*httptest.Server, string) {
+func spinCA(t *testing.T) (*httptest.Server, string, []byte) {
 	t.Helper()
 	authority, err := ca.New("pin-test-ca")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// httptest serves on 127.0.0.1: the leaf needs an IP SAN for the
-	// enrollment call's real hostname verification to pass.
+	// The leaf carries ONLY DNS SANs, exactly like a real bootstrap
+	// certificate (--server-name, no IP SAN). httptest serves on
+	// 127.0.0.1 — bare-IP enrollment must still work through the pinned
+	// client (the pin is the identity; hostname checks are waived there).
 	leafPEM, keyPEM, err := authority.IssueCert(ca.IssueOptions{
-		CommonName:  "control.test",
-		Usage:       ca.UsageServer,
-		DNSNames:    []string{"control.test"},
-		IPAddresses: []net.IP{net.ParseIP("127.0.0.1")},
+		CommonName: "control.test",
+		Usage:      ca.UsageServer,
+		DNSNames:   []string{"control.test"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -52,11 +53,11 @@ func spinCA(t *testing.T) (*httptest.Server, string) {
 
 	block, _ := pem.Decode(authority.CertPEM())
 	sum := sha256.Sum256(block.Bytes)
-	return ts, hex.EncodeToString(sum[:])
+	return ts, hex.EncodeToString(sum[:]), authority.CertPEM()
 }
 
 func TestPinnedDownloadClientAcceptsCorrectCA(t *testing.T) {
-	ts, pin := spinCA(t)
+	ts, pin, _ := spinCA(t)
 	client, err := newPinnedDownloadClient(ts.URL, pin)
 	if err != nil {
 		t.Fatalf("newPinnedDownloadClient rejected the correct CA pin: %v", err)
@@ -71,8 +72,44 @@ func TestPinnedDownloadClientAcceptsCorrectCA(t *testing.T) {
 	}
 }
 
+// TestPinnedDownloadAllowsBareIP: the pinned client connects to
+// https://127.0.0.1:<port> against a DNS-SAN-only certificate — the
+// documented homelab flow (enroll via bare IP, cert has --server-name
+// DNS SANs only). The pin is the identity, so hostname checks are
+// waived; the chain must still verify against the pinned CA.
+func TestPinnedDownloadAllowsBareIP(t *testing.T) {
+	ts, pin, _ := spinCA(t)
+	client, err := newPinnedDownloadClient(ts.URL, pin)
+	if err != nil {
+		t.Fatalf("newPinnedDownloadClient: %v", err)
+	}
+	resp, err := client.Get(ts.URL + "/enroll")
+	if err != nil {
+		t.Fatalf("bare-IP enrollment through the pinned client failed: %v", err)
+	}
+	resp.Body.Close()
+}
+
+// TestCAPinnedClientKeepsHostnameCheck: the --ca path (stock
+// verification) still REQUIRES the hostname to match — the asymmetry is
+// deliberate: --ca trusts a bundle and verifies names; --ca-pin trusts a
+// single identity and waives names.
+func TestCAPinnedClientKeepsHostnameCheck(t *testing.T) {
+	ts, _, caPEM := spinCA(t)
+	// The --ca path (stock verification) with the CORRECT bundle.
+	client, err := enroll.NewPinnedClient(caPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Bare IP vs DNS-SAN-only cert: stock verification must reject —
+	// the asymmetry with --ca-pin is deliberate.
+	if _, err := client.Get(ts.URL + "/enroll"); err == nil {
+		t.Fatal("stock --ca client accepted a bare-IP connection without a matching SAN")
+	}
+}
+
 func TestPinnedDownloadClientRejectsWrongCA(t *testing.T) {
-	ts, _ := spinCA(t)
+	ts, _, _ := spinCA(t)
 	wrong := strings.Repeat("ab", 32)
 	_, err := newPinnedDownloadClient(ts.URL, wrong)
 	if err == nil {
@@ -128,10 +165,9 @@ func TestPinnedDownloadClientIgnoresAppendedCerts(t *testing.T) {
 	}
 	// The server presents a leaf issued by the ROGUE CA.
 	leafPEM, keyPEM, err := rogue.IssueCert(ca.IssueOptions{
-		CommonName:  "evil.test",
-		Usage:       ca.UsageServer,
-		DNSNames:    []string{"evil.test"},
-		IPAddresses: []net.IP{net.ParseIP("127.0.0.1")},
+		CommonName: "evil.test",
+		Usage:      ca.UsageServer,
+		DNSNames:   []string{"evil.test"},
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -3,6 +3,7 @@ package agentcli
 import (
 	"crypto/sha256"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
@@ -253,5 +254,56 @@ func newPinnedDownloadClient(serverURL, wantFingerprint string) (*http.Client, e
 	// Trust exactly the pinned certificate: appended certificates in the
 	// served bundle must never become trust roots (a MITM could serve
 	// [pinned CA][rogue CA] and pass a first-block-only check).
-	return enroll.NewPinnedClient(pem.EncodeToMemory(block))
+	//
+	// Hostname verification is deliberately SKIPPED here: the pin IS the
+	// identity (pinned-download model), and the bootstrap certificate is
+	// issued with --server-name DNS SANs only — enrolling against a bare
+	// IP (https://VPS_IP:8443) must keep working. The chain is still
+	// verified against the pinned CA: only the hostname check is waived.
+	pinnedPool := x509.NewCertPool()
+	pinnedPool.AppendCertsFromPEM(pem.EncodeToMemory(block))
+	return &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				RootCAs:               pinnedPool,
+				MinVersion:            tls.VersionTLS13,
+				InsecureSkipVerify:    true, // hostname check waived, chain checked below
+				VerifyPeerCertificate: verifyChainOnly(pinnedPool),
+			},
+		},
+	}, nil
+}
+
+// verifyChainOnly returns a VerifyPeerCertificate that validates the
+// presented chain against pool but does NOT check the hostname. Used by
+// the pinned-download path: the CA fingerprint pins the identity, so a
+// hostname mismatch is expected and harmless (bare-IP enrollment).
+func verifyChainOnly(pool *x509.CertPool) func([][]byte, [][]*x509.Certificate) error {
+	return func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+		if len(rawCerts) == 0 {
+			return fmt.Errorf("no server certificate")
+		}
+		certs := make([]*x509.Certificate, 0, len(rawCerts))
+		for _, der := range rawCerts {
+			c, err := x509.ParseCertificate(der)
+			if err != nil {
+				return fmt.Errorf("parse peer certificate: %w", err)
+			}
+			certs = append(certs, c)
+		}
+		inter := x509.NewCertPool()
+		for _, c := range certs[1:] {
+			inter.AddCert(c)
+		}
+		_, err := certs[0].Verify(x509.VerifyOptions{
+			Roots:         pool,
+			Intermediates: inter,
+			// No KeyUsages/hostname: the pin is the identity; the
+			// bootstrap leaf is ServerAuth but may carry only
+			// --server-name DNS SANs.
+			KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
+		})
+		return err
+	}
 }
