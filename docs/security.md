@@ -114,14 +114,17 @@ verify it against any system trust store. The script takes no pin: the
 proof that you know the control server. Its security model and honest
 caveats:
 
-**What it guarantees.** The token is single-use, bound to the hostname
-you pass and short-lived (TTL set at `claymod host token` time) — and it
-is **never embedded in a served script**: it is passed at run time and
-burned on the hostname you name. The agent binary is digest-checked
-against the served SHA-256; a swapped or corrupted binary fails before
-enrollment. Enrollment itself is authenticated by the token, and the
-resulting identity material rides the response to the legitimate caller
-only.
+**What it guarantees — against a passive observer only.** The token is
+single-use, bound to the hostname you pass and short-lived (TTL set at
+`claymod host token` time) — and it is **never embedded in a served
+script**: it is passed at run time and burned on the hostname you name.
+Enrollment itself is authenticated by the token. The served `.sha256`
+digest is a corruption guard, nothing more: on this unauthenticated
+channel a MITM controls the binary *and* its sidecar, so a swapped
+binary passes it — the digest only binds the two files together. The
+returned identity material (agent cert/key) is confidential against
+someone merely watching the network (TLS still encrypts), not against a
+channel-controlling MITM, who can terminate/relay TLS and read it.
 
 **What it cannot guarantee — the honest `curl | sh` caveats.**
 - *The pipeline hides curl's failure.* `curl | sh` reports `sh`'s exit
@@ -156,8 +159,10 @@ wgctrl). It can be served by the control server itself
 hosts. The binary carries no secrets; integrity comes from SHA-256
 digests — logged by `serve` at startup and served as a `.sha256` sidecar
 for comparison on the host. A pinned channel (CA bundle / fingerprint,
-manual flows) authenticates the download; in the token-only one-liner
-the digest guards against a corrupted or swapped file.
+manual flows) authenticates the download, and there the digest catches a
+corrupted or swapped file; in the token-only one-liner the channel is
+unauthenticated, so a MITM controls the binary and its sidecar alike —
+the digest is only a corruption guard, not an authenticity check.
 
 ## Dependency footprint
 
