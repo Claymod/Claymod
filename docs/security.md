@@ -39,7 +39,7 @@ Not defended (by design, documented boundaries):
 ## Trust pinning (no TOFU)
 
 The enrolling host pins the bootstrap server with **either** a CA bundle
-(`--ca`) or a SHA-256 certificate fingerprint (`--ca-pin`, printed by
+(`--ca`) or the CA fingerprint (`--ca-pin`, printed by
 `claymod serve` at startup). There is no trust-on-first-use mode: an
 unpinned enrollment is refused at the CLI.
 
@@ -65,8 +65,9 @@ the host — enrollment transmits only its public key.
 
 Tokens, private keys and certificate contents are never logged. The
 enrollment server logs hostname, remote address and outcome; `serve`
-prints the bootstrap certificate fingerprint (it is public by design —
-it is what you pin). Client certificate material is written only to the
+prints the CA fingerprint (it is public by design — it is what you
+pin; one value authenticates both the curl | sh bootstrap and
+`--ca-pin` enrollment). Client certificate material is written only to the
 files named above.
 
 ## Protocol hardening

@@ -44,15 +44,17 @@ claymod-agent enroll \
   --server https://claymod.internal:8443 \
   --token <token> \
   --hostname web01 \
-  --ca-pin <sha256-of-bootstrap-server-cert>
+  --ca-pin <CA-fingerprint>
 ```
 
 The full `claymod` binary embeds the same `enroll`/`agent`/`wg-setup`
 subcommands, so it works too — hosts just don't need its weight.
 
 Trust is **pinned**: either `--ca <bundle.pem>` (CA bundle) or
-`--ca-pin <hex>` (SHA-256 fingerprint of the server's leaf certificate).
-The fingerprint is printed by the server on startup and can be computed
+`--ca-pin <hex>` (the CA fingerprint, printed by the server on
+startup as "CA fingerprint (the pin: /enroll.sh and --ca-pin)"). Both
+pin modes verify the served `/ca.pem` bundle against exactly this
+value — one pin for the whole deployment. It can also be computed
 with:
 
 ```sh
@@ -78,7 +80,7 @@ bootstrap script at `GET|POST /enroll.sh`:
 
 ```sh
 # CA_FINGERPRINT is printed by `claymod serve` at startup:
-#   CA fingerprint (pin for the curl | sh bootstrap):
+#   CA fingerprint (the pin: /enroll.sh and --ca-pin):
 #     <64 hex chars>
 # The -k is required: the bootstrap certificate comes from claymod's
 # internal CA — the fingerprint you pass IS the trust anchor.
