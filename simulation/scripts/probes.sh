@@ -66,6 +66,17 @@ until probe --cert "$CERT" --key "$KEY" >/dev/null 2>&1; do
 done
 echo "== enrolled agent is reachable"
 
+# The CA fingerprint is the pin the /enroll.sh one-liner verifies.
+sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+openssl x509 -in "$CA" -outform DER -out "$WORK/ca.der"
+FINGERPRINT="$(sha256 "$WORK/ca.der")"
+
 fail=0
 check() {
   name="$1"
@@ -109,6 +120,27 @@ check "rogue client certificate rejected" \
 #    one-cert bundle).
 check "untrusted server rejected" \
   probe --ca "$WORK/rogue.pem" --cert "$CERT" --key "$KEY" --expect-reject
+
+# 5. The bootstrap script endpoint must serve a coherent enroll.sh:
+#    pinned CA verification, agent download + digest, systemd unit,
+#    and no embedded token. (The script itself runs on the host — here
+#    we assert the served contract.)
+echo "=== bootstrap script /enroll.sh"
+if curl -fsS --cacert "$CA" -X POST -d "$FINGERPRINT" \
+    "${CONTROL_URL:-https://control:8443}/enroll.sh" -o "$WORK/enroll.sh"; then
+  if sh -n "$WORK/enroll.sh" &&
+     grep -q "claymod-agent.service" "$WORK/enroll.sh" &&
+     grep -q "digest mismatch" "$WORK/enroll.sh" &&
+     grep -q "fingerprint mismatch" "$WORK/enroll.sh"; then
+    echo "=== bootstrap script /enroll.sh: PASS"
+  else
+    echo "=== bootstrap script /enroll.sh: FAIL (incoherent script)"
+    fail=1
+  fi
+else
+  echo "=== bootstrap script /enroll.sh: FAIL (not served)"
+  fail=1
+fi
 
 echo
 if [ "$fail" -eq 0 ]; then

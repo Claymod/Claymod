@@ -95,6 +95,7 @@ if [ "${1:-}" = "--local" ]; then
   # NB: PATH must be assigned BEFORE WORK reassigns it — bash expands
   # env assignments left to right.
   PATH="$WORK:$PATH" AGENT_ADDR=127.0.0.1:2323 SERVER_NAME=agent \
+    CONTROL_URL=https://localhost:8443 \
     SHARED_DIR="$WORK/shared" WORK="$WORK/probe-tmp" \
     sh "$SIM/scripts/probes.sh"
 else
