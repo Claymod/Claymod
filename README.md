@@ -88,15 +88,22 @@ WireGuard and install a systemd unit:
 
 ```sh
 # the CA fingerprint is printed by `claymod serve` at startup
-curl -fsSL -d "$CA_FINGERPRINT" https://control:8443/enroll.sh \
+# (-k is required: the bootstrap certificate comes from claymod's
+#  internal CA — the fingerprint you pass IS the trust anchor)
+curl -fsSLk -d "$CA_FINGERPRINT" https://control:8443/enroll.sh \
   | sudo sh -s -- --token <TOKEN> --hostname web01
 ```
 
-The pin you pass authenticates the whole run: the script fetches the CA
-bundle over an untrusted channel *and verifies it against your pin*
-before anything else is trusted. The token is the access credential and
-is never embedded in a served script — whoever holds it decides which
-host name it is burned on. Caveats of `curl | sh` are spelled out in
+Use a URL whose **host name** matches the server's `--server-name`
+(the script's own downloads verify the hostname against the pinned CA):
+resolve `control` via DNS or a hosts entry, or pass `--server` to the
+script to override the URL baked into it. The pin you pass
+authenticates the whole run: the script fetches the CA bundle over an
+untrusted channel *and verifies it against your pin* before anything
+else is trusted. The token is the access credential and is never
+embedded in a served script — whoever holds it decides which host name
+it is burned on. Caveats of `curl | sh` (including the pipeline's
+silent-failure mode) are spelled out in
 [docs/security.md](docs/security.md#one-liner-bootstrap); the manual
 enrollment path below is always available.
 

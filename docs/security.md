@@ -92,8 +92,12 @@ reconnection with bounded retries, graceful shutdown.
 
 ## One-liner bootstrap
 
-`curl -fsSL -d "$PIN" https://control:8443/enroll.sh | sudo sh` is a
-convenience for bulk enrollment. Its security model and honest caveats:
+`curl -fsSLk -d "$PIN" https://control:8443/enroll.sh | sudo sh` is a
+convenience for bulk enrollment. The `-k` is required: the bootstrap
+certificate comes from claymod's internal CA, so a fresh host cannot
+verify it against any system trust store — the pin you pass IS the
+trust anchor (the script verifies the fetched CA against it before
+anything else). Its security model and honest caveats:
 
 **What it guarantees.** The pin you pass is the SHA-256 fingerprint of
 the CA certificate — the trust anchor for everything claymod issues. The
@@ -107,11 +111,14 @@ burned on the hostname you name. A wrong pin aborts before any
 installation; a swapped agent binary fails the digest check.
 
 **What it cannot guarantee — the honest `curl | sh` caveats.**
+- *The pipeline hides curl's failure.* `curl | sh` reports `sh`'s exit
+  code: if the fetch fails, `sh` runs on empty input and exits 0. Use
+  the fetch-first form below, or at least watch the output.
 - *The script runs with root and executes before you read it.* If the
   pin is wrong or the attacker already controls the channel AND you
   didn't pin, whatever is piped runs. Pinning is what makes this
   auditable: fetch the script first, read it, then run —
-  `curl -fsSL -d "$PIN" …/enroll.sh -o enroll.sh && less enroll.sh &&
+  `curl -fsSLk -d "$PIN" …/enroll.sh -o enroll.sh && less enroll.sh &&
   sudo sh enroll.sh --token … --hostname …` is the cautious form.
 - *Trust is as good as the pin's distribution.* Publish the CA
   fingerprint over a channel the attacker doesn't control (your runbook,

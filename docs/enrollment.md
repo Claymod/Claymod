@@ -80,9 +80,19 @@ bootstrap script at `GET|POST /enroll.sh`:
 # CA_FINGERPRINT is printed by `claymod serve` at startup:
 #   CA fingerprint (pin for the curl | sh bootstrap):
 #     <64 hex chars>
-curl -fsSL -d "$CA_FINGERPRINT" https://control:8443/enroll.sh \
+# The -k is required: the bootstrap certificate comes from claymod's
+# internal CA — the fingerprint you pass IS the trust anchor.
+curl -fsSLk -d "$CA_FINGERPRINT" https://control:8443/enroll.sh \
   | sudo sh -s -- --token <TOKEN> --hostname web01
 ```
+
+Use a URL whose host name matches the server's `--server-name` (the
+script's own downloads verify the hostname against the pinned CA;
+resolve it via DNS or a hosts entry, or pass `--server` to the script to
+override the URL baked into it). Note the pipeline reports `sh`'s exit
+code, not curl's: if the fetch fails, `sh` silently succeeds on empty
+input — check the output, or use the cautious fetch-first form in
+[docs/security.md](security.md#one-liner-bootstrap).
 
 What the script does, in order, failing closed at every step:
 
@@ -96,7 +106,10 @@ What the script does, in order, failing closed at every step:
 5. runs `claymod-agent wg-setup` (the one root-only step);
 6. installs `/usr/local/bin/claymod-agent` plus a **systemd unit**
    (`claymod-agent.service`, `Restart=always`, `enable --now`) so the
-   agent survives reboots.
+   agent survives reboots. Note the unit starts only the agent: after a
+   host reboot the WireGuard tunnel must be re-created first
+   (`claymod-agent wg-setup`, or your own wg-quick unit) before the
+   agent can be reached again.
 
 Options: `--server`, `--pin`, `--out-dir`, `--bin-dir`, `--skip-wg`
 (skip WireGuard bring-up), `--no-systemd` (install the binary only).
