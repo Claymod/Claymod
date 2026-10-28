@@ -122,16 +122,16 @@ check "untrusted server rejected" \
   probe --ca "$WORK/rogue.pem" --cert "$CERT" --key "$KEY" --expect-reject
 
 # 5. The bootstrap script endpoint must serve a coherent enroll.sh:
-#    pinned CA verification, agent download + digest, systemd unit,
-#    and no embedded token. (The script itself runs on the host — here
-#    we assert the served contract.)
+#    token-only enrollment (--insecure-token-only), agent download +
+#    digest, systemd unit, and no embedded token. (The script itself
+#    runs on the host — here we assert the served contract.)
 echo "=== bootstrap script /enroll.sh"
-if curl -fsS --cacert "$CA" -X POST -d "$FINGERPRINT" \
+if curl -fsS --cacert "$CA" -X POST \
     "${CONTROL_URL:-https://control:8443}/enroll.sh" -o "$WORK/enroll.sh"; then
   if sh -n "$WORK/enroll.sh" &&
      grep -q "claymod-agent.service" "$WORK/enroll.sh" &&
      grep -q "digest mismatch" "$WORK/enroll.sh" &&
-     grep -q "fingerprint mismatch" "$WORK/enroll.sh"; then
+     grep -q -- "--insecure-token-only" "$WORK/enroll.sh"; then
     echo "=== bootstrap script /enroll.sh: PASS"
   else
     echo "=== bootstrap script /enroll.sh: FAIL (incoherent script)"

@@ -29,6 +29,7 @@ func NewEnrollCmd() *cobra.Command {
 		hostname  string
 		caFile    string
 		caPin     string
+		tokenOnly bool
 		outDir    string
 		listen    string
 		skipWG    bool
@@ -51,6 +52,7 @@ of the control CA).`,
 				hostname:  hostname,
 				caFile:    caFile,
 				caPin:     caPin,
+				tokenOnly: tokenOnly,
 				outDir:    outDir,
 				listen:    listen,
 				skipWG:    skipWG,
@@ -63,6 +65,8 @@ of the control CA).`,
 	cmd.Flags().StringVar(&hostname, "hostname", "", "this host's name (must match the token binding)")
 	cmd.Flags().StringVar(&caFile, "ca", "", "PEM bundle used to verify the bootstrap server")
 	cmd.Flags().StringVar(&caPin, "ca-pin", "", "SHA-256 fingerprint of the control CA (hex; verified against /ca.pem)")
+	cmd.Flags().BoolVar(&tokenOnly, "insecure-token-only", false,
+		"skip all server authentication: the one-time token is the sole credential (used by the /enroll.sh bootstrap)")
 	cmd.Flags().StringVar(&outDir, "out-dir", "/etc/claymod", "directory for the enrolled identity files")
 	cmd.Flags().StringVar(&listen, "listen", "0.0.0.0:2323", "agent listen address written to agent.yaml")
 	cmd.Flags().BoolVar(&skipWG, "skip-wg-config", false, "write identity files only; do not print WireGuard setup")
@@ -79,6 +83,7 @@ type enrollOptions struct {
 	hostname  string
 	caFile    string
 	caPin     string
+	tokenOnly bool
 	outDir    string
 	listen    string
 	skipWG    bool
@@ -87,8 +92,17 @@ type enrollOptions struct {
 
 func runEnroll(cmd *cobra.Command, o enrollOptions) error {
 	out := cmd.OutOrStdout()
-	if o.caFile == "" && o.caPin == "" {
-		return fmt.Errorf("either --ca or --ca-pin is required (pin the bootstrap server before enrolling)")
+	modes := 0
+	for _, set := range []bool{o.caFile != "", o.caPin != "", o.tokenOnly} {
+		if set {
+			modes++
+		}
+	}
+	if o.tokenOnly && (o.caFile != "" || o.caPin != "") {
+		return fmt.Errorf("--insecure-token-only cannot be combined with --ca or --ca-pin")
+	}
+	if modes != 1 {
+		return fmt.Errorf("choose exactly one trust mode: --ca, --ca-pin, or --insecure-token-only (pin the bootstrap server before enrolling)")
 	}
 
 	// Local WireGuard identity: generated here, never leaves the host.
@@ -98,7 +112,20 @@ func runEnroll(cmd *cobra.Command, o enrollOptions) error {
 	}
 
 	var client *http.Client
-	if o.caFile != "" {
+	if o.tokenOnly {
+		// Bearer-token flow (the /enroll.sh bootstrap): no server
+		// authentication — the one-time, hostname-bound token is the
+		// sole credential.
+		client = &http.Client{
+			Timeout: 30 * time.Second,
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{
+					MinVersion:         tls.VersionTLS13,
+					InsecureSkipVerify: true,
+				},
+			},
+		}
+	} else if o.caFile != "" {
 		caPEM, err := os.ReadFile(o.caFile)
 		if err != nil {
 			return fmt.Errorf("read CA bundle: %w", err)

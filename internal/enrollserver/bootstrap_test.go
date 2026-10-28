@@ -43,7 +43,7 @@ func fetchScript(t *testing.T, ts *httptest.Server, method, path, body string) (
 	return resp.StatusCode, string(out)
 }
 
-func TestEnrollScriptEmbedsPinAndFlow(t *testing.T) {
+func TestEnrollScriptEmbedsTokenFlow(t *testing.T) {
 	s := newScriptServer(t)
 	ts := httptest.NewServer(s.Handler())
 	defer ts.Close()
@@ -53,38 +53,43 @@ func TestEnrollScriptEmbedsPinAndFlow(t *testing.T) {
 		t.Fatalf("status = %d, want 200", status)
 	}
 	for _, want := range []string{
-		testPin,                      // pinned CA fingerprint
 		"claymod-agent.service",      // systemd unit
 		"WantedBy=multi-user.target", // enabled for boot
 		"systemctl enable --now",     // started now + persistent
 		"agent.sha256",               // agent digest check
 		"digest mismatch",            // fail-closed on tamper
-		"fingerprint mismatch",       // fail-closed on wrong CA
 		"set -eu",                    // strict mode
 		"wg-setup",                   // WireGuard bring-up
 		"--token \"$TOKEN\"",         // token passed at runtime
+		"--insecure-token-only",      // token is the credential
+		"curl -fsS -k",               // unauthenticated downloads
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("script missing %q", want)
 		}
 	}
+	for _, unwanted := range []string{testPin, "--pin", "fingerprint mismatch", "--ca "} {
+		if strings.Contains(script, unwanted) {
+			t.Errorf("script should not contain %q", unwanted)
+		}
+	}
 }
 
-func TestEnrollScriptPinValidation(t *testing.T) {
+func TestEnrollScriptIgnoresBodyAndPinQuery(t *testing.T) {
 	s := newScriptServer(t)
 	ts := httptest.NewServer(s.Handler())
 	defer ts.Close()
 
-	for _, body := range []string{"not-a-pin", "pin=zz", strings.Repeat("ab", 33)} {
-		status, _ := fetchScript(t, ts, "POST", "/enroll.sh", body)
-		if status != http.StatusBadRequest {
-			t.Errorf("body %q: status = %d, want 400", body, status)
+	// Old-style one-liners POSTed the CA fingerprint; the body (and a
+	// ?pin= query) are now accepted and ignored.
+	for _, path := range []string{"/enroll.sh", "/enroll.sh?pin=" + testPin} {
+		status, script := fetchScript(t, ts, "POST", path, testPin)
+		if status != http.StatusOK {
+			t.Errorf("POST %s: status = %d, want 200", path, status)
 		}
-	}
-	// GET with ?pin= works too, same validation.
-	status, script := fetchScript(t, ts, "GET", "/enroll.sh?pin="+testPin, "")
-	if status != http.StatusOK || !strings.Contains(script, testPin) {
-		t.Errorf("GET ?pin: status = %d", status)
+		if strings.Contains(script, testPin) {
+			t.Errorf("POST %s: script embeds the posted body", path)
+		}
 	}
 }
 

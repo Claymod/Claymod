@@ -1,6 +1,7 @@
 package agentcli
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
@@ -54,6 +55,47 @@ func spinCA(t *testing.T) (*httptest.Server, string, []byte) {
 	block, _ := pem.Decode(authority.CertPEM())
 	sum := sha256.Sum256(block.Bytes)
 	return ts, hex.EncodeToString(sum[:]), authority.CertPEM()
+}
+
+// TestTokenOnlyModeAcceptsAnyServer: --insecure-token-only skips all
+// server authentication (no CA, no pin): the one-time token is the sole
+// credential, so any server certificate is accepted — including a
+// bare-IP target with a DNS-SAN-only cert, the /enroll.sh flow.
+func TestTokenOnlyModeAcceptsAnyServer(t *testing.T) {
+	ts, _, _ := spinCA(t)
+	cmd := NewEnrollCmd()
+	cmd.SetContext(context.Background())
+	if err := runEnroll(cmd, enrollOptions{
+		serverURL: ts.URL,
+		token:     "tok",
+		hostname:  "web01",
+		tokenOnly: true,
+		outDir:    t.TempDir(),
+	}); err != nil {
+		t.Fatalf("token-only enrollment failed: %v", err)
+	}
+}
+
+// TestTokenOnlyModeMutuallyExclusive: the trust modes are exclusive.
+func TestTokenOnlyModeMutuallyExclusive(t *testing.T) {
+	if err := runEnroll(NewEnrollCmd(), enrollOptions{
+		serverURL: "https://control.test:8443",
+		token:     "tok",
+		hostname:  "web01",
+		tokenOnly: true,
+		caPin:     strings.Repeat("ab", 32),
+		outDir:    t.TempDir(),
+	}); err == nil || !strings.Contains(err.Error(), "cannot be combined") {
+		t.Fatalf("err = %v, want --insecure-token-only/--ca-pin conflict", err)
+	}
+	if err := runEnroll(NewEnrollCmd(), enrollOptions{
+		serverURL: "https://control.test:8443",
+		token:     "tok",
+		hostname:  "web01",
+		outDir:    t.TempDir(),
+	}); err == nil || !strings.Contains(err.Error(), "exactly one trust mode") {
+		t.Fatalf("err = %v, want no-trust-mode refusal", err)
+	}
 }
 
 func TestPinnedDownloadClientAcceptsCorrectCA(t *testing.T) {

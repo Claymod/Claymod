@@ -191,18 +191,16 @@ func runServe(ctx context.Context, cmd *cobra.Command, o serveOptions) error {
 	}
 	log.Info("bootstrap endpoint listening (https)",
 		"addr", o.bootstrapAddr, "server_name", o.serverName)
-	// ONE pin for the deployment: the CA fingerprint. It authenticates
-	// the /enroll.sh bootstrap and `--ca-pin` enrollment alike (both
-	// verify the served /ca.pem bundle against it).
+	// The CA fingerprint pins `--ca-pin` enrollment (and `--ca`
+	// verification); the one-liner is token-only.
 	out := cmd.OutOrStdout()
 	if block, _ := pem.Decode(st.CA.CertPEM()); block != nil {
 		sum := sha256.Sum256(block.Bytes)
 		fp := hex.EncodeToString(sum[:])
 		fmt.Fprintf(out,
-			"CA fingerprint (the pin: /enroll.sh and --ca-pin)\n  %s\n", fp)
+			"CA fingerprint (the pin for agent enroll --ca-pin/--ca)\n  %s\n", fp)
 		fmt.Fprintf(out,
-			"one-liner enroll for hosts:\n  curl -fsSLk -d %s \\\n    https://<control-host>:8443/enroll.sh | sudo sh -s -- --token <token> --hostname <name>\n",
-			fp)
+			"one-liner enroll for hosts (the token is the credential):\n  curl -fsSLk \\\n    https://<control-host>:8443/enroll.sh | sudo sh -s -- --token <token> --hostname <name>\n")
 	}
 
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
