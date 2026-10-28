@@ -149,6 +149,10 @@ if [ "$ACTUAL" != "$PIN" ]; then
   exit 1
 fi
 echo "== CA verified: $ACTUAL"
+# Trust exactly the verified certificate: never the raw bundle (appended
+# certificates must not become trust roots).
+openssl x509 -in "$WORK/ca.pem" -out "$WORK/ca.pem.pinned"
+mv "$WORK/ca.pem.pinned" "$WORK/ca.pem"
 
 # 2. Pick the agent binary for this platform.
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"

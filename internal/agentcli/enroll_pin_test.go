@@ -112,3 +112,61 @@ func TestPinnedDownloadClientRejectsTamperedCA(t *testing.T) {
 		t.Errorf("error = %q, want fingerprint mismatch", err.Error())
 	}
 }
+
+// TestPinnedDownloadClientIgnoresAppendedCerts: a MITM serving
+// [pinned CA][rogue CA] must NOT get the rogue trusted as a root. The
+// TLS server is issued by the rogue CA; with bundle-trust the call
+// would succeed — with pinned-block trust it must fail.
+func TestPinnedDownloadClientIgnoresAppendedCerts(t *testing.T) {
+	honest, err := ca.New("honest-ca")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rogue, err := ca.New("rogue-ca")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The server presents a leaf issued by the ROGUE CA.
+	leafPEM, keyPEM, err := rogue.IssueCert(ca.IssueOptions{
+		CommonName:  "evil.test",
+		Usage:       ca.UsageServer,
+		DNSNames:    []string{"evil.test"},
+		IPAddresses: []net.IP{net.ParseIP("127.0.0.1")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := tls.X509KeyPair(leafPEM, keyPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// ...but serves a bundle that APPENDS the honest CA first.
+	bundle := append(append([]byte{}, honest.CertPEM()...), rogue.CertPEM()...)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/ca.pem", func(w http.ResponseWriter, r *http.Request) {
+		w.Write(bundle)
+	})
+	mux.HandleFunc("/enroll", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{}`))
+	})
+	ts := httptest.NewUnstartedServer(mux)
+	ts.TLS = &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13}
+	ts.StartTLS()
+	defer ts.Close()
+
+	block, _ := pem.Decode(honest.CertPEM())
+	sum := sha256.Sum256(block.Bytes)
+	pin := hex.EncodeToString(sum[:])
+
+	client, err := newPinnedDownloadClient(ts.URL, pin)
+	if err != nil {
+		t.Fatalf("pinned client rejected correct first cert: %v", err)
+	}
+	// The enrollment call must fail TLS verification: the rogue CA
+	// appended after the pinned block must not be a trust root.
+	resp, err := client.Get(ts.URL + "/enroll")
+	if err == nil {
+		resp.Body.Close()
+		t.Fatal("enrollment succeeded through a rogue CA appended to the bundle")
+	}
+}

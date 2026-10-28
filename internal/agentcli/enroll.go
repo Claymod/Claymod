@@ -41,7 +41,7 @@ over the control server's HTTPS bootstrap endpoint: a WireGuard key pair
 is generated locally (the private key never leaves this host), and the
 server returns the overlay IP, CA bundle and mTLS client certificate.
 Trust is pinned with --ca (PEM bundle) or --ca-pin (SHA-256 fingerprint
-of the server certificate).`,
+of the control CA).`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runEnroll(cmd, enrollOptions{
@@ -250,5 +250,8 @@ func newPinnedDownloadClient(serverURL, wantFingerprint string) (*http.Client, e
 		return nil, fmt.Errorf("CA fingerprint mismatch (got %s, want %s) — refusing to enroll",
 			got, wantFingerprint)
 	}
-	return enroll.NewPinnedClient(caPEM)
+	// Trust exactly the pinned certificate: appended certificates in the
+	// served bundle must never become trust roots (a MITM could serve
+	// [pinned CA][rogue CA] and pass a first-block-only check).
+	return enroll.NewPinnedClient(pem.EncodeToMemory(block))
 }
