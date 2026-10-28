@@ -173,35 +173,31 @@ networks (127/8) share `127.0.0.1` and have no reservation. The default
 UDP port is **51821** — deliberately not WireGuard's standard 51820 so
 claymod never collides with a user's own tunnel (`--wg-port` to change).
 
-### Path A — operator-managed (default, no root needed for claymod)
+### Path A — claymod-managed (default)
 
-`claymod serve` maintains `claymod-data/<interface>.conf` (0600 — it
-contains the server's private key), regenerated on every enroll/revoke
-and on restart. Apply it yourself:
+By default `claymod serve` **manages the interface itself**: at startup
+it creates/refreshes the interface (needs `CAP_NET_ADMIN`, i.e. root),
+assigns the overlay address, private key and listen port, and keeps
+peers in sync via wgctrl as hosts enroll/revoke. Nothing to run by
+hand. On the host side, `claymod-agent wg-setup` (run by the one-liner,
+or by hand) does the same from the enrollment output
+(`/etc/claymod/wg-setup.json`).
+
+### Path B — operator-managed (opt out)
+
+With `--manage-interface=false`, `serve` still writes
+`claymod-data/<interface>.conf` (0600 — it contains the server's
+private key), regenerated on every enroll/revoke and restart, but never
+touches the interface. Apply it yourself:
 
 ```sh
 sudo wg-quick up /path/to/claymod-data/claymod0.conf   # first time
 sudo wg syncconf claymod0 <(wg-quick strip /path/to/claymod-data/claymod0.conf)
 ```
 
-On the host, `claymod-agent enroll` writes `/etc/claymod/wg-setup.json` with
-everything for its side (overlay address, locally generated private key,
-the server's peer entry). Render the equivalent wg-quick config from it,
-or run path B.
-
-### Path B — `claymod-agent wg-setup` (one root step on each side)
-
-```sh
-# control server (root):
-sudo claymod serve --manage-interface ...
-# or after the fact:
-sudo claymod-agent wg-setup   # host side; reads /etc/claymod/wg-setup.json
-```
-
-`--manage-interface` creates/refreshes the interface at startup (needs
-`CAP_NET_ADMIN`); peers are kept in sync via wgctrl as hosts enroll.
-`claymod-agent wg-setup` does the same for the host side from its
-enrollment output.
+On the host, render the equivalent wg-quick config from
+`wg-setup.json`, or run `claymod-agent wg-setup` — it only needs
+`CAP_NET_ADMIN` for its one root step.
 
 ### Path C — wg-quick / networkd / container runtime
 

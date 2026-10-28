@@ -41,6 +41,17 @@ Two binaries, one per side of the wire:
 | `claymod` | control server + full CLI | ~14 MB | sqlite, pkl, wgctrl |
 | `claymod-agent` | host agent (static) | ~7 MB | stdlib + yaml only |
 
+Download from the [latest release](https://github.com/Claymod/Claymod/releases/latest)
+and verify against `SHA256SUMS`:
+
+```sh
+BASE=https://github.com/Claymod/Claymod/releases/latest/download
+curl -fsSL -O $BASE/claymod-linux-<arch> -O $BASE/claymod-agent-linux-<arch> -O $BASE/SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS
+```
+
+Building from source (developers):
+
 ```sh
 make build          # bin/claymod (control) + bin/claymod-agent (host)
 make agents         # cross-compiled agents in bin/agents/ + sha256 sums
