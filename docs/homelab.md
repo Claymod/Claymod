@@ -44,17 +44,28 @@ exposed: applies, facts and exec dial the agent inside the tunnel.
 
 ## Phase 0 — Build binaries on the workstation
 
-No Go toolchain is needed on the VPS or the VM; cross-compile once per
-architecture from the repo root on the Mac:
+Claymod is two binaries:
+
+| Binary | Where it runs | Built by | Contains |
+|---|---|---|---|
+| `claymod` | control server (VPS) | `make build` | serve, playbooks, inventory, exec — needs the `pkl` CLI |
+| `claymod-agent` | managed hosts (VM) | `make agent` | `agent`, `enroll`, `wg-setup` — static, no deps |
+
+No Go toolchain is needed on the VPS or the VM; cross-compile from the
+repo root on the Mac. The control binary only needs the VPS arch; the
+agent can also be cross-compiled into `bin/agents/` for the download
+endpoint (§2.1 alternative) or for copying to any host:
 
 ```sh
+# control server (VPS):
 make build GOOS=linux GOARCH=amd64 BIN=bin/claymod-linux-amd64
-make build GOOS=linux GOARCH=arm64 BIN=bin/claymod-linux-arm64
+
+# agent matrix (claymod-agent-<goos>-<goarch> + sha256 sums):
+make agents          # bin/agents/claymod-agent-linux-{amd64,arm64}, darwin-…
 ```
 
-(`make build` passes `GOOS`/`GOARCH` through to `go build`. Debian on
-UTM on Apple Silicon is **arm64**; check with `uname -m` on each target:
-`x86_64` → amd64, `aarch64` → arm64.)
+(Debian on UTM on Apple Silicon is **arm64**; check with `uname -m` on
+each target: `x86_64` → amd64, `aarch64` → arm64.)
 
 ## Phase 1 — Control server on the VPS
 
@@ -82,6 +93,14 @@ rsync -av bin/claymod-linux-<arch> root@VPS_IP:/usr/local/bin/claymod
 ssh root@VPS_IP 'mkdir -p ~/claymod/pkl'
 rsync -av pkl/ root@VPS_IP:~/claymod/pkl/          # the PKL schema
 rsync -av scripts/bootstrap-pkl.sh root@VPS_IP:~/claymod/
+```
+
+Optionally also serve the agent binaries over the pinned bootstrap
+channel so hosts can fetch their own agent (the air-gap flow):
+
+```sh
+rsync -av bin/agents/ root@VPS_IP:~/claymod/agents/
+# then add --agent-bin-dir ~/claymod/agents to the serve command (§1.3)
 ```
 
 The server needs the `pkl` CLI to evaluate playbooks (agents never do):
@@ -222,15 +241,25 @@ The only boot decision is **who creates the interface**:
 
 ```sh
 ssh <vm>
-uname -m                          # aarch64 → use the arm64 binary
+uname -m                          # aarch64 → use the arm64 agent
 apt update && apt install -y wireguard-tools curl
 ```
 
-Upload the matching binary from the workstation:
+The VM only ever needs the small **agent** binary. Two ways to get it
+there — pick one:
 
 ```sh
-# on the workstation
-rsync -av bin/claymod-linux-<arch> <vm>:/usr/local/bin/claymod
+# (a) copy from the workstation
+rsync -av bin/agents/claymod-agent-linux-<arch> <vm>:/usr/local/bin/claymod-agent
+
+# (b) download over the pinned bootstrap channel (if you added
+#     --agent-bin-dir in §1.2) — this is also the air-gap flow:
+#   on the VM, with the server's ca.pem in hand:
+curl --cacert ca.pem -o claymod-agent \
+  https://VPS_IP:8443/agent/linux/<arch>
+curl --cacert ca.pem https://VPS_IP:8443/agent/linux/<arch>.sha256
+sha256sum claymod-agent          # compare with the served digest
+sudo install -m 0755 claymod-agent /usr/local/bin/claymod-agent
 ```
 
 ### 2.2 Issue a token (on the VPS)
@@ -246,7 +275,7 @@ bound to the name `web01`, valid 15 minutes).
 ### 2.3 Enroll (on the VM)
 
 ```sh
-claymod enroll \
+claymod-agent enroll \
   --server https://VPS_IP:8443 \
   --token "$(ssh root@VPS_IP cat ~/token-web01)" \
   --hostname web01 \
@@ -270,7 +299,7 @@ entry — endpoint `VPS_IP:51821`, keepalive 25). One root command applies
 it:
 
 ```sh
-sudo claymod wg-setup --out-dir /etc/claymod
+sudo claymod-agent wg-setup --out-dir /etc/claymod
 # → wireguard interface claymod0 is up (10.42.0.2/24)
 #   peer <server-public-key> endpoint VPS_IP:51821 allowed-ips 10.42.0.0/24
 ```
@@ -284,8 +313,8 @@ fight you.
 At boot, re-run `wg-setup` (or your own wg-quick unit) before the agent:
 the private key and peer live only in the interface, not on disk in
 applied form. A `claymod-wg.service` oneshot that runs
-`claymod wg-setup --out-dir /etc/claymod` (`Before=claymod-agent`) is
-the simplest way.
+`claymod-agent wg-setup --out-dir /etc/claymod` (`Before=claymod-agent`)
+is the simplest way.
 
 Verify:
 
@@ -298,8 +327,8 @@ On the VPS: `wg show` should now list web01 as a peer.
 
 ### 2.5 Start the agent
 
-`claymod agent --config /etc/claymod/agent.yaml` (foreground first to
-see it listen; then `claymod-agent.service`):
+`claymod-agent agent --config /etc/claymod/agent.yaml` (foreground
+first to see it listen; then `claymod-agent.service`):
 
 ```ini
 [Unit]
@@ -309,7 +338,7 @@ Wants=network-online.target
 Requires=claymod-wg.service
 
 [Service]
-ExecStart=/usr/local/bin/claymod agent --config /etc/claymod/agent.yaml
+ExecStart=/usr/local/bin/claymod-agent agent --config /etc/claymod/agent.yaml
 Restart=always
 RestartSec=5
 
@@ -318,7 +347,7 @@ WantedBy=multi-user.target
 ```
 
 `claymod-wg.service` is the oneshot from §2.4 that runs
-`claymod wg-setup --out-dir /etc/claymod` at boot.
+`claymod-agent wg-setup --out-dir /etc/claymod` at boot.
 
 ```sh
 systemctl daemon-reload

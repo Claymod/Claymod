@@ -29,22 +29,26 @@ can tunnel (root-only, see §5).
 claymod host token web01 --ttl 15m
 ```
 
-This prints the token and the exact `claymod enroll` command to run on the
-host. Tokens are single-use, expire on TTL and are **bound to the
-hostname** — an attempt to enroll as a different name is refused and does
-not burn the token.
+This prints the token and the exact host-side commands (download the
+`claymod-agent` binary, then `./claymod-agent enroll …`). Tokens are
+single-use, expire on TTL and are **bound to the hostname** — an attempt
+to enroll as a different name is refused and does not burn the token.
 
 ## 3. Enroll the host
 
-On the host (with `claymod` available):
+On the host, with the **agent** binary in hand (`claymod-agent` — from
+`make agent`, the release, or the pinned download in §3a):
 
 ```sh
-claymod enroll \
+claymod-agent enroll \
   --server https://claymod.internal:8443 \
   --token <token> \
   --hostname web01 \
   --ca-pin <sha256-of-bootstrap-server-cert>
 ```
+
+The full `claymod` binary embeds the same `enroll`/`agent`/`wg-setup`
+subcommands, so it works too — hosts just don't need its weight.
 
 Trust is **pinned**: either `--ca <bundle.pem>` (CA bundle) or
 `--ca-pin <hex>` (SHA-256 fingerprint of the server's leaf certificate).
@@ -65,6 +69,7 @@ openssl s_client -connect claymod.internal:8443 -servername claymod.internal </d
 | `agent-key.pem` | agent mTLS private key | 0600 |
 | `agent.yaml` | agent configuration | 0644 |
 | `wg-keys.json` | WireGuard key pair (generated locally) | 0600 |
+| `wg-setup.json` | everything `wg-setup` needs to bring up the tunnel | 0600 |
 
 ### Air-gapped bootstrap: the agent binary comes from the server
 
@@ -95,7 +100,7 @@ sudo ./claymod-agent agent --config /etc/claymod/agent.yaml
 ## 4. Start the agent
 
 ```sh
-claymod agent --config /etc/claymod/agent.yaml
+claymod-agent agent --config /etc/claymod/agent.yaml
 ```
 
 The agent listens for framed mTLS connections on the WireGuard overlay
@@ -123,24 +128,24 @@ sudo wg-quick up /path/to/claymod-data/claymod0.conf   # first time
 sudo wg syncconf claymod0 <(wg-quick strip /path/to/claymod-data/claymod0.conf)
 ```
 
-On the host, `claymod enroll` writes `/etc/claymod/wg-setup.json` with
+On the host, `claymod-agent enroll` writes `/etc/claymod/wg-setup.json` with
 everything for its side (overlay address, locally generated private key,
 the server's peer entry). Render the equivalent wg-quick config from it,
 or run path B.
 
-### Path B — `claymod wg-setup` (one root step on each side)
+### Path B — `claymod-agent wg-setup` (one root step on each side)
 
 ```sh
 # control server (root):
 sudo claymod serve --manage-interface ...
 # or after the fact:
-sudo claymod wg-setup   # host side; reads /etc/claymod/wg-setup.json
+sudo claymod-agent wg-setup   # host side; reads /etc/claymod/wg-setup.json
 ```
 
 `--manage-interface` creates/refreshes the interface at startup (needs
 `CAP_NET_ADMIN`); peers are kept in sync via wgctrl as hosts enroll.
-`claymod wg-setup` does the same for the host side from its enrollment
-output.
+`claymod-agent wg-setup` does the same for the host side from its
+enrollment output.
 
 ### Path C — wg-quick / networkd / container runtime
 
