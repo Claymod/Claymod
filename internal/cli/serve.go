@@ -185,18 +185,18 @@ func runServe(ctx context.Context, cmd *cobra.Command, o serveOptions) error {
 	}
 	log.Info("bootstrap endpoint listening (https)",
 		"addr", o.bootstrapAddr, "server_name", o.serverName)
-	// Two distinct trust anchors, both printed for pinning:
-	//
-	//	- the bootstrap leaf certificate: --ca-pin for
-	//	  `claymod-agent enroll` / `claymod probe`;
-	//	- the CA certificate: the pin the /enroll.sh one-liner
-	//	  verifies the whole bootstrap against.
+	// ONE pin for the deployment: the CA fingerprint. It authenticates
+	// the /enroll.sh bootstrap and `--ca-pin` enrollment alike (both
+	// verify the served /ca.pem bundle against it).
 	out := cmd.OutOrStdout()
-	if leaf := st.ServerID.Certificate.Certificate; len(leaf) > 0 {
-		sum := sha256.Sum256(leaf[0])
+	if block, _ := pem.Decode(st.CA.CertPEM()); block != nil {
+		sum := sha256.Sum256(block.Bytes)
+		fp := hex.EncodeToString(sum[:])
 		fmt.Fprintf(out,
-			"bootstrap certificate fingerprint (pin with --ca-pin):\n  %s\n",
-			hex.EncodeToString(sum[:]))
+			"CA fingerprint (the pin: /enroll.sh and --ca-pin)\n  %s\n", fp)
+		fmt.Fprintf(out,
+			"one-liner enroll for hosts:\n  curl -fsSLk -d %s \\\n    https://<control-host>:8443/enroll.sh | sudo sh -s -- --token <token> --hostname <name>\n",
+			fp)
 	}
 	caDer := st.CA.CertPEM()
 	if block, _ := pem.Decode(caDer); block != nil {
@@ -281,7 +281,7 @@ func newHostTokenCmd() *cobra.Command {
 			fmt.Fprintf(out, "enrollment token for %s (valid %s):\n  %s\n", args[0], ttl, token)
 			fmt.Fprintf(out, "on the host, download the agent and enroll:\n")
 			fmt.Fprintf(out, "  curl --cacert ca.pem -o claymod-agent https://<control-host>:8443/agent/$(go env GOOS 2>/dev/null || uname -s | tr A-Z a-z)/$(go env GOARCH 2>/dev/null || uname -m | sed s/x86_64/amd64/) && chmod +x claymod-agent\n")
-			fmt.Fprintf(out, "  ./claymod-agent enroll --server https://<control-host>:8443 --token %s --hostname %s --ca-pin <sha256-of-bootstrap-cert>\n", token, args[0])
+			fmt.Fprintf(out, "  ./claymod-agent enroll --server https://<control-host>:8443 --token %s --hostname %s --ca-pin <CA fingerprint>\n", token, args[0])
 			if tokenFile != "" {
 				if err := os.WriteFile(tokenFile, []byte(token+"\n"), 0o600); err != nil {
 					return fmt.Errorf("write token file: %w", err)

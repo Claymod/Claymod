@@ -3,15 +3,16 @@ package agentcli
 import (
 	"crypto/sha256"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -60,7 +61,7 @@ of the server certificate).`,
 	cmd.Flags().StringVar(&token, "token", "", "one-time enrollment token")
 	cmd.Flags().StringVar(&hostname, "hostname", "", "this host's name (must match the token binding)")
 	cmd.Flags().StringVar(&caFile, "ca", "", "PEM bundle used to verify the bootstrap server")
-	cmd.Flags().StringVar(&caPin, "ca-pin", "", "SHA-256 fingerprint of the bootstrap server certificate (hex)")
+	cmd.Flags().StringVar(&caPin, "ca-pin", "", "SHA-256 fingerprint of the control CA (hex; verified against /ca.pem)")
 	cmd.Flags().StringVar(&outDir, "out-dir", "/etc/claymod", "directory for the enrolled identity files")
 	cmd.Flags().StringVar(&listen, "listen", "0.0.0.0:2323", "agent listen address written to agent.yaml")
 	cmd.Flags().BoolVar(&skipWG, "skip-wg-config", false, "write identity files only; do not print WireGuard setup")
@@ -106,7 +107,13 @@ func runEnroll(cmd *cobra.Command, o enrollOptions) error {
 			return err
 		}
 	} else {
-		client = newFingerprintHTTPClient(o.caPin)
+		// Pinned download: fetch /ca.pem over transport-only TLS and
+		// verify its digest against the pin before trusting it.
+		var err error
+		client, err = newPinnedDownloadClient(o.serverURL, o.caPin)
+		if err != nil {
+			return err
+		}
 	}
 
 	resp, err := enroll.EnrollClient(cmd.Context(), o.serverURL, client, enroll.Request{
@@ -208,28 +215,40 @@ func printWGSetup(out io.Writer, o enrollOptions, resp *enroll.Response, keys wg
 		resp.WgServerPublicKey, resp.WgEndpoint, resp.Overlay)
 }
 
-// newFingerprintHTTPClient pins the server by SHA-256 certificate
-// fingerprint (InsecureSkipVerify + explicit fingerprint check: the peer
-// is authenticated by pinning, not a CA chain).
-func newFingerprintHTTPClient(wantFingerprint string) *http.Client {
-	return &http.Client{
-		Timeout: 30 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				MinVersion:         tls.VersionTLS13,
-				InsecureSkipVerify: true,
-				VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
-					if len(rawCerts) == 0 {
-						return fmt.Errorf("no server certificate")
-					}
-					sum := sha256.Sum256(rawCerts[0])
-					if hex.EncodeToString(sum[:]) != wantFingerprint {
-						return fmt.Errorf("server certificate fingerprint mismatch (got %s)",
-							hex.EncodeToString(sum[:]))
-					}
-					return nil
-				},
-			},
+// newPinnedDownloadClient verifies the control CA by pinned download:
+// it fetches GET /ca.pem over a transport-only TLS connection (the
+// channel itself is untrusted on purpose) and checks the SHA-256 digest
+// of the served certificate against the caller's pin. Only then is the
+// bundle trusted to authenticate the enrollment call. This is the same
+// trust model as the curl | sh bootstrap script — one pin, the CA.
+func newPinnedDownloadClient(serverURL, wantFingerprint string) (*http.Client, error) {
+	transport := &http.Transport{
+		TLSClientConfig: &tls.Config{
+			MinVersion:         tls.VersionTLS13,
+			InsecureSkipVerify: true, // transport untrusted: the pin is the trust
 		},
 	}
+	fetch := &http.Client{Timeout: 15 * time.Second, Transport: transport}
+	resp, err := fetch.Get(strings.TrimRight(serverURL, "/") + "/ca.pem")
+	if err != nil {
+		return nil, fmt.Errorf("fetch /ca.pem: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fetch /ca.pem: HTTP %d", resp.StatusCode)
+	}
+	caPEM, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, fmt.Errorf("read /ca.pem: %w", err)
+	}
+	block, _ := pem.Decode(caPEM)
+	if block == nil {
+		return nil, fmt.Errorf("/ca.pem does not contain a PEM certificate")
+	}
+	sum := sha256.Sum256(block.Bytes)
+	if got := hex.EncodeToString(sum[:]); got != wantFingerprint {
+		return nil, fmt.Errorf("CA fingerprint mismatch (got %s, want %s) — refusing to enroll",
+			got, wantFingerprint)
+	}
+	return enroll.NewPinnedClient(caPEM)
 }
