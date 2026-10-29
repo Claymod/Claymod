@@ -35,8 +35,12 @@ resources {
 Rules learned the hard way (PKL specifics):
 
 - The playbook **amends** `modulepath:/claymod/base.pkl` — one root
-  document, modules come from the schema directory (default `./pkl`,
-  override with `CLAYMOD_SCHEMA_DIR`).
+  document. The std schema is **embedded in the binary**: validate,
+  plan and apply work from any working directory, no checkout needed.
+  `CLAYMOD_SCHEMA_DIR` pins an on-disk copy of the schema instead;
+  `--module-path` (repeatable) and `CLAYMOD_MODULE_PATH`
+  (colon-separated) add extra lookup directories for external
+  libraries.
 - Amended properties **must not repeat type annotations** and may not
   introduce new non-local properties: `hosts`, `vars`, `resources` and
   `hostName` are declared in `base.pkl`.
@@ -107,9 +111,11 @@ claymod playbook apply playbook.pkl      # push to the targeted hosts
 claymod playbook apply playbook.pkl --check   # dry run
 ```
 
-Useful `apply` flags: `--limit web01,web02` (subset), `--verbose`
-(per-op detail), `--check` (would-change only), `--parallel N`,
-`--max-fail N` (failure policy).
+Useful flags on all three commands: `--module-path <dir>` (repeatable;
+extra lookup directories for external libraries — `CLAYMOD_MODULE_PATH`
+adds colon-separated ones). Useful `apply` flags: `--limit web01,web02`
+(subset), `--verbose` (per-op detail), `--check` (would-change only),
+`--parallel N`, `--max-fail N` (failure policy).
 
 Applies are **idempotent**: unchanged resources report `changed=false`,
 so a re-run is cheap and safe. Per-host rendering means `{{.Host}}` and

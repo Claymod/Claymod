@@ -521,9 +521,9 @@ resources {
 
 ### 3.2 Validate, plan, apply
 
-From `~/claymod` (the directory that contains `pkl/` — that is the
-schema dir; override with `CLAYMOD_SCHEMA_DIR` if you run from
-elsewhere):
+From any directory — the std schema is embedded in the binary
+(`CLAYMOD_SCHEMA_DIR` pins an on-disk copy; `--module-path` adds extra
+library lookup dirs):
 
 ```sh
 claymod playbook validate homelab/playbook.pkl
@@ -585,4 +585,4 @@ tcpdump -ni any port 2323            # then run an apply in another shell
 | tunnel up, agent unreachable | the agent listens on the overlay IP only; check `ss -tlnp | grep 2323` on the VM and that `agent.yaml` `listen` matches |
 | apply: `x509: certificate ... not found` | the CA rotated or `--data-dir` points at a different deployment than the agent enrolled against |
 | handshakes never resume after a reboot | the server interface is missing (operator-managed path: `wg-quick@claymod0` not enabled) — `serve` re-syncs peers but the interface must exist |
-| playbook: `modulepath:/claymod/base.pkl` not found | run from the directory containing `pkl/`, or set `CLAYMOD_SCHEMA_DIR` |
+| playbook: `modulepath:/claymod/base.pkl` not found | the std is embedded in the binary, so this means `CLAYMOD_SCHEMA_DIR` points at a wrong/incomplete copy (unset it to use the embedded std) — for other modules the error names the searched module path: add the missing library dir with `--module-path` or `CLAYMOD_MODULE_PATH` |
