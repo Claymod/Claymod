@@ -205,7 +205,7 @@ func (s *Server) handleAgentDownload(w http.ResponseWriter, r *http.Request) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		httpError(w, http.StatusNotFound,
-			fmt.Sprintf("no agent binary for %s/%s on the server (build with `make agents`)", goos, goarch))
+			fmt.Sprintf("no agent binary for %s/%s on the server: drop the release asset claymod-agent-%s-%s into --agent-bin-dir", goos, goarch, goos, goarch))
 		return
 	}
 	if wantDigest {
