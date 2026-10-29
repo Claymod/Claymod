@@ -117,41 +117,18 @@ sha256() {
 
 # 0. Preflight: WireGuard tooling must exist BEFORE enrollment — the
 #    token is single-use, and a failure after it leaves a half-set-up
-#    host with a burned token. Best-effort install, then fail closed
-#    with nothing touched on this host and the token unconsumed.
-install_wg_tools() {
-  if command -v apt-get >/dev/null 2>&1; then
-    DEBIAN_FRONTEND=noninteractive apt-get update -qq &&
-      DEBIAN_FRONTEND=noninteractive apt-get install -y -qq wireguard-tools iproute2
-  elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y -q wireguard-tools iproute
-  elif command -v yum >/dev/null 2>&1; then
-    yum install -y -q wireguard-tools iproute
-  elif command -v zypper >/dev/null 2>&1; then
-    zypper --non-interactive install wireguard-tools iproute2
-  elif command -v pacman >/dev/null 2>&1; then
-    pacman -Sy --noconfirm wireguard-tools iproute2
-  elif command -v apk >/dev/null 2>&1; then
-    apk add --no-cache --quiet wireguard-tools iproute2
-  else
-    return 1
-  fi
-}
-
+#    host with a burned token. Nothing is installed here: if the tools
+#    are missing the script aborts with the token unconsumed.
 if [ "$SKIP_WG" = "0" ]; then
-  if ! command -v wg >/dev/null 2>&1 || ! command -v ip >/dev/null 2>&1; then
-    echo "== WireGuard tooling missing; installing wireguard-tools"
-    install_wg_tools || true
-  fi
   if ! command -v wg >/dev/null 2>&1; then
-    echo "FATAL: 'wg' (wireguard-tools) is missing and could not be" >&2
-    echo "installed automatically. Install it (apt/dnf/yum/apk/pacman/zypper)" >&2
-    echo "and re-run. NOTHING has been enrolled: the token is still valid." >&2
+    echo "FATAL: 'wg' (wireguard-tools) is missing. Install it" >&2
+    echo "(apt/dnf/yum/apk/pacman/zypper) and re-run." >&2
+    echo "NOTHING has been enrolled: the token is still valid." >&2
     exit 2
   fi
   if ! command -v ip >/dev/null 2>&1; then
-    echo "FATAL: 'ip' (iproute2) is missing and could not be installed." >&2
-    echo "Install it and re-run. NOTHING has been enrolled: the token is still valid." >&2
+    echo "FATAL: 'ip' (iproute2) is missing. Install it and re-run." >&2
+    echo "NOTHING has been enrolled: the token is still valid." >&2
     exit 2
   fi
 fi

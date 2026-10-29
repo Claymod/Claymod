@@ -63,9 +63,10 @@ func TestEnrollScriptEmbedsTokenFlow(t *testing.T) {
 		"--token \"$TOKEN\"",         // token passed at runtime
 		"--insecure-token-only",      // token is the credential
 		"curl -fsS -k",               // unauthenticated downloads
-		// Preflight: wg/ip checked BEFORE the token-consuming enroll.
+		// Preflight: wg/ip checked BEFORE the token-consuming enroll;
+		// missing tooling aborts with the token unconsumed.
 		"command -v wg",        // preflight check
-		"wireguard-tools",      // best-effort install
+		"wireguard-tools",      // named in the abort message
 		"token is still valid", // fail-closed before enrollment
 		// Fail-safe after enrollment: report, don't die midway.
 		"WARNING: WireGuard bring-up FAILED", // wg failure is not fatal
@@ -75,7 +76,13 @@ func TestEnrollScriptEmbedsTokenFlow(t *testing.T) {
 			t.Errorf("script missing %q", want)
 		}
 	}
-	for _, unwanted := range []string{testPin, "--pin", "fingerprint mismatch", "--ca "} {
+	// No auto-install: package managers may only be named as advice in
+	// the abort message, never invoked.
+	for _, unwanted := range []string{
+		testPin, "--pin", "fingerprint mismatch", "--ca ", "install_wg_tools",
+		"apt-get install", "apt-get update", "dnf install", "yum install",
+		"zypper install", "pacman -Sy", "apk add",
+	} {
 		if strings.Contains(script, unwanted) {
 			t.Errorf("script should not contain %q", unwanted)
 		}
