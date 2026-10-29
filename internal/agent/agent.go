@@ -25,6 +25,11 @@ type Agent struct {
 	opLimit time.Duration
 	// maxCapture bounds captured stdout/stderr per command (1 MiB).
 	maxCapture int
+	// maxConns caps concurrent sessions (0 = default 32): the N+1st
+	// connection waits, keeping memory bounded against connection
+	// floods on the overlay.
+	maxConns int
+	sessions chan struct{}
 }
 
 // Options configures an Agent.
@@ -35,6 +40,9 @@ type Options struct {
 	Services ServiceRunner
 	// OpTimeout bounds one op when the request carries no timeout.
 	OpTimeout time.Duration
+	// MaxConns caps concurrent sessions (0 = 32): the N+1st connection
+	// waits for a slot instead of growing memory without bound.
+	MaxConns int
 }
 
 // New creates an Agent.
@@ -51,7 +59,14 @@ func New(opts Options) *Agent {
 	if opLimit <= 0 {
 		opLimit = 10 * time.Minute
 	}
-	return &Agent{log: log, svc: svc, opLimit: opLimit, maxCapture: 1 << 20}
+	maxConns := opts.MaxConns
+	if maxConns <= 0 {
+		maxConns = 32
+	}
+	return &Agent{
+		log: log, svc: svc, opLimit: opLimit, maxCapture: 1 << 20,
+		maxConns: maxConns, sessions: make(chan struct{}, maxConns),
+	}
 }
 
 // Serve accepts connections on ln until ctx is cancelled or the listener
@@ -74,9 +89,29 @@ func (a *Agent) Serve(ctx context.Context, ln net.Listener) error {
 			}
 			return fmt.Errorf("agent: accept: %w", err)
 		}
+		// Session cap: acquire a slot before spawning; released when
+		// the session ends. The accept loop blocks (backpressure) when
+		// the cap is reached instead of growing without bound.
+		select {
+		case a.sessions <- struct{}{}:
+		case <-ctx.Done():
+			raw.Close()
+			return nil
+		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer func() { <-a.sessions }()
+			// Panic isolation: one hostile frame or buggy op must
+			// never kill the daemon; the connection dies, the agent
+			// keeps serving.
+			defer func() {
+				if r := recover(); r != nil {
+					a.log.Error("agent: recovered from panic in session",
+						"remote", raw.RemoteAddr().String(), "panic", r)
+					raw.Close()
+				}
+			}()
 			a.handleConn(ctx, raw)
 		}()
 	}
