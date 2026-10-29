@@ -63,6 +63,13 @@ func TestEnrollScriptEmbedsTokenFlow(t *testing.T) {
 		"--token \"$TOKEN\"",         // token passed at runtime
 		"--insecure-token-only",      // token is the credential
 		"curl -fsS -k",               // unauthenticated downloads
+		// Preflight: wg/ip checked BEFORE the token-consuming enroll.
+		"command -v wg",        // preflight check
+		"wireguard-tools",      // best-effort install
+		"token is still valid", // fail-closed before enrollment
+		// Fail-safe after enrollment: report, don't die midway.
+		"WARNING: WireGuard bring-up FAILED", // wg failure is not fatal
+		"bootstrap INCOMPLETE",               // partial state is explicit
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("script missing %q", want)

@@ -115,6 +115,47 @@ sha256() {
   fi
 }
 
+# 0. Preflight: WireGuard tooling must exist BEFORE enrollment — the
+#    token is single-use, and a failure after it leaves a half-set-up
+#    host with a burned token. Best-effort install, then fail closed
+#    with nothing touched on this host and the token unconsumed.
+install_wg_tools() {
+  if command -v apt-get >/dev/null 2>&1; then
+    DEBIAN_FRONTEND=noninteractive apt-get update -qq &&
+      DEBIAN_FRONTEND=noninteractive apt-get install -y -qq wireguard-tools iproute2
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf install -y -q wireguard-tools iproute
+  elif command -v yum >/dev/null 2>&1; then
+    yum install -y -q wireguard-tools iproute
+  elif command -v zypper >/dev/null 2>&1; then
+    zypper --non-interactive install wireguard-tools iproute2
+  elif command -v pacman >/dev/null 2>&1; then
+    pacman -Sy --noconfirm wireguard-tools iproute2
+  elif command -v apk >/dev/null 2>&1; then
+    apk add --no-cache --quiet wireguard-tools iproute2
+  else
+    return 1
+  fi
+}
+
+if [ "$SKIP_WG" = "0" ]; then
+  if ! command -v wg >/dev/null 2>&1 || ! command -v ip >/dev/null 2>&1; then
+    echo "== WireGuard tooling missing; installing wireguard-tools"
+    install_wg_tools || true
+  fi
+  if ! command -v wg >/dev/null 2>&1; then
+    echo "FATAL: 'wg' (wireguard-tools) is missing and could not be" >&2
+    echo "installed automatically. Install it (apt/dnf/yum/apk/pacman/zypper)" >&2
+    echo "and re-run. NOTHING has been enrolled: the token is still valid." >&2
+    exit 2
+  fi
+  if ! command -v ip >/dev/null 2>&1; then
+    echo "FATAL: 'ip' (iproute2) is missing and could not be installed." >&2
+    echo "Install it and re-run. NOTHING has been enrolled: the token is still valid." >&2
+    exit 2
+  fi
+fi
+
 # 1. Pick the agent binary for this platform.
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH="$(uname -m)"
@@ -139,23 +180,37 @@ chmod 0755 "$WORK/claymod-agent"
 
 # 4. Enroll: the WireGuard key pair is generated here and never leaves
 #    this host. Token-only: no --ca/--ca-pin, the one-time token is the
-#    credential.
-"$WORK/claymod-agent" enroll \
+#    credential. This is the point of no return: from here on the token
+#    is consumed, so later failures are reported, not fatal.
+if ! "$WORK/claymod-agent" enroll \
   --server "$SERVER" \
   --token "$TOKEN" \
   --hostname "$HOSTNAME" \
   --insecure-token-only \
   --out-dir "$OUT_DIR" \
-  --skip-wg-config
+  --skip-wg-config; then
+  echo "FATAL: enrollment failed. If the token was consumed (single-use)," >&2
+  echo "revoke the host and issue a fresh token on the control server:" >&2
+  echo "  claymod host revoke $HOSTNAME && claymod host token $HOSTNAME ..." >&2
+  exit 1
+fi
 
 # 5. WireGuard interface (the one root-only step of enrollment).
+WG_FAILED=0
 if [ "$SKIP_WG" = "0" ]; then
-  "$WORK/claymod-agent" wg-setup --out-dir "$OUT_DIR"
+  if ! "$WORK/claymod-agent" wg-setup --out-dir "$OUT_DIR"; then
+    WG_FAILED=1
+    echo "WARNING: WireGuard bring-up FAILED — enrollment DID succeed" >&2
+    echo "(identity files in $OUT_DIR, token consumed)." >&2
+    echo "  Finish by hand once WireGuard works:" >&2
+    echo "    $BIN_DIR/claymod-agent wg-setup --out-dir $OUT_DIR" >&2
+  fi
 else
   echo "== WireGuard bring-up skipped (--skip-wg)"
 fi
 
-# 6. Install the agent and a systemd unit so it survives reboots.
+# 6. Install the agent and a systemd unit so it survives reboots
+#    (always, even when the tunnel failed: the agent is enrolled).
 mkdir -p "$BIN_DIR"
 cp "$WORK/claymod-agent" "$BIN_DIR/claymod-agent"
 if [ "$NO_SYSTEMD" = "0" ]; then
@@ -180,6 +235,12 @@ else
   echo "== systemd skipped (--no-systemd); agent installed at $BIN_DIR/claymod-agent"
 fi
 
+if [ "$WG_FAILED" = "1" ]; then
+  echo "== bootstrap INCOMPLETE: $HOSTNAME is enrolled and the agent is" >&2
+  echo "   installed, but the WireGuard tunnel is not up. Fix WireGuard" >&2
+  echo "   and run: $BIN_DIR/claymod-agent wg-setup --out-dir $OUT_DIR" >&2
+  exit 1
+fi
 echo "== bootstrap complete: $HOSTNAME is enrolled"
 if [ "$NO_SYSTEMD" = "1" ]; then
   echo "   start it with: $BIN_DIR/claymod-agent agent --config $OUT_DIR/agent.yaml"
