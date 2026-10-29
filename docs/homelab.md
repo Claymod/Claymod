@@ -291,12 +291,13 @@ The only boot decision is **who creates the interface**:
 ```sh
 ssh <vm>
 uname -m                          # aarch64 → arm64 agent
-apt update && apt install -y curl
+apt update && apt install -y wireguard-tools curl
 ```
 
-(Manual §2.4 also needs `wireguard-tools`; the one-liner checks for and
-installs it itself — its preflight runs **before** the token is
-consumed, so a missing dependency aborts with the token still valid.)
+(`wireguard-tools` provides `wg`, needed by the tunnel step; the
+one-liner's preflight checks for it **before** the token is consumed, so
+a missing dependency aborts with the token still valid. The script never
+installs packages in your place.)
 
 No DNS setup needed: the one-liner works against a bare IP
 (`https://VPS_IP:8443`). If you prefer a name, a hosts entry
