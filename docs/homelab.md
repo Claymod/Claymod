@@ -291,8 +291,12 @@ The only boot decision is **who creates the interface**:
 ```sh
 ssh <vm>
 uname -m                          # aarch64 → arm64 agent
-apt update && apt install -y wireguard-tools curl openssl
+apt update && apt install -y curl
 ```
+
+(Manual §2.4 also needs `wireguard-tools`; the one-liner checks for and
+installs it itself — its preflight runs **before** the token is
+consumed, so a missing dependency aborts with the token still valid.)
 
 No DNS setup needed: the one-liner works against a bare IP
 (`https://VPS_IP:8443`). If you prefer a name, a hosts entry
@@ -308,8 +312,7 @@ claymod host token web01 --data-dir ~/claymod-data --ttl 15m \
 
 This prints the token and writes it to `~/token-web01` (single-use,
 bound to the name `web01`, valid 15 minutes). It also prints the exact
-one-liner to run on the host (with the CA pin and the required `-k`
-included).
+one-liner to run on the host (token-only — the `-k` is included).
 
 ### 2.3 Enroll — the one-liner (preferred)
 
@@ -569,6 +572,7 @@ tcpdump -ni any port 2323            # then run an apply in another shell
 | one-liner exits 0 but nothing happened | `curl | sh` reports sh's exit code — a failed fetch looks like success; watch for the `==` progress lines (§2.3) |
 | one-liner: `curl: (22) … 404` on the agent download | serve isn't serving binaries — read the startup log (§1.2 "How binaries are served"): `directory does not exist` = wrong path (check for an unexpanded `~` in the unit: `dir=~/…` literally); `no claymod-agent-<goos>-<goarch> files here` = dir exists but the files are missing or misnamed (keep the release asset names) |
 | one-liner: could not resolve `vps` | use the bare IP (`https://VPS_IP:8443`) directly, or add a §2.1 hosts entry, or pass `--server https://<name>:8443` |
+| enrolled but `wg-setup`/agent install failed (old script) | the token is burned but nothing is lost: install `wireguard-tools`, fetch the agent again (`curl -fsSLk -o claymod-agent https://VPS_IP:8443/agent/linux/<arch>`), run `claymod-agent wg-setup --out-dir /etc/claymod`, install it to `/usr/local/bin` + the systemd unit — or simply `claymod host revoke <name>` and re-run the one-liner with a fresh token (the new script preflights WireGuard tooling first) |
 | agent dead after a VM reboot | the tunnel was not re-created — run `sudo claymod-agent wg-setup` (§2.5 reboot note) |
 | `wg show` empty on the VPS | no peer installed — check `serve` ran with `--wg-backend wgctrl` (not `fake`) and watch its log for the `wireguard configuration written` line |
 | tunnel up, agent unreachable | the agent listens on the overlay IP only; check `ss -tlnp | grep 2323` on the VM and that `agent.yaml` `listen` matches |

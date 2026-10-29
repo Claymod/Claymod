@@ -107,6 +107,12 @@ input — check the output, or use the cautious fetch-first form in
 
 What the script does, in order, failing closed at every step:
 
+0. **preflight** (unless `--skip-wg`): checks `wg` and `ip` and
+   best-effort installs `wireguard-tools` via the system package manager
+   (apt/dnf/yum/zypper/pacman/apk) — *before* the token is consumed, so
+   a missing dependency can never leave a half-set-up host with a burned
+   token. Missing tooling with no package manager aborts with the token
+   still valid;
 1. downloads `claymod-agent` for this platform from
    `GET /agent/{goos}/{goarch}` (transport unauthenticated — the token
    is the credential);
@@ -119,6 +125,11 @@ What the script does, in order, failing closed at every step:
    host reboot the WireGuard tunnel must be re-created first
    (`claymod-agent wg-setup`, or your own wg-quick unit) before the
    agent can be reached again.
+
+From step 3 on the token is consumed, so later failures are never
+silently fatal: a failed WireGuard bring-up still installs the agent and
+unit, then reports `bootstrap INCOMPLETE` with the exact finish-by-hand
+command (`claymod-agent wg-setup --out-dir /etc/claymod`).
 
 Options: `--server`, `--out-dir`, `--bin-dir`, `--skip-wg`
 (skip WireGuard bring-up), `--no-systemd` (install the binary only).
