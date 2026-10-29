@@ -86,3 +86,43 @@ func TestDialWithRetriesHonorsContext(t *testing.T) {
 		t.Errorf("cancellation took %v; retry loop slept through it", elapsed)
 	}
 }
+
+// TestDialWithRetriesZeroDisables: DialRetries=0 means dial ONCE — the
+// documented disable (the old code mapped 0 to the default 3).
+func TestDialWithRetriesZeroDisables(t *testing.T) {
+	calls := atomic.Int32{}
+	old := dialFn
+	dialFn = func(addr, serverName string, id proto.Identity, pool *x509.CertPool) (*proto.Conn, error) {
+		calls.Add(1)
+		return nil, errors.New("down")
+	}
+	t.Cleanup(func() { dialFn = old })
+
+	spec := HostSpec{Target: Target{Hostname: "web01", Addr: "127.0.0.1:1", ServerName: "web01"}}
+	_, err := dialWithRetries(context.Background(), spec, Request{}, Options{DialRetries: 0})
+	if err == nil {
+		t.Fatal("expected failure")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Errorf("dial calls = %d, want 1 (0 must disable retries)", got)
+	}
+}
+
+// TestDialBackoffStaysBounded: the doubling must never overflow into a
+// negative Duration (which would panic rand.Int63n) and never exceed
+// the cap — exercised across the shift-overflow range.
+func TestDialBackoffStaysBounded(t *testing.T) {
+	for try := 1; try <= 64; try++ {
+		b := dialBackoff(try)
+		if b <= 0 {
+			t.Fatalf("dialBackoff(%d) = %v, must be positive", try, b)
+		}
+		if b > dialBackoffCap {
+			t.Fatalf("dialBackoff(%d) = %v > cap %v", try, b, dialBackoffCap)
+		}
+	}
+	// The growth is real before the cap: try=1 base, try=2 double.
+	if dialBackoff(1) != dialBackoffBase || dialBackoff(2) != 2*dialBackoffBase {
+		t.Errorf("backoff growth wrong: %v %v", dialBackoff(1), dialBackoff(2))
+	}
+}

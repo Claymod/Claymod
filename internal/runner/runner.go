@@ -68,9 +68,10 @@ type Options struct {
 	// default).
 	Timeout time.Duration
 	// DialRetries is how many times a failed CONNECTION SETUP is
-	// retried with exponential backoff + jitter (0 = 3). Only dial
-	// errors are retried: a failure after ops started streaming is
-	// final — replaying mid-stream could double-apply.
+	// retried with exponential backoff + jitter (0 = no retry: dial
+	// once; negative = default 3). Only dial errors are retried: a
+	// failure after ops started streaming is final — replaying
+	// mid-stream could double-apply.
 	DialRetries int
 }
 
@@ -208,6 +209,21 @@ const (
 	dialBackoffCap   = 5 * time.Second
 )
 
+// dialBackoff returns the pre-jitter wait for retry attempt try (1-based),
+// doubling from dialBackoffBase and clamped to dialBackoffCap. The clamp
+// also catches shift overflow: 500ms << 35 wraps to a negative Duration,
+// which would panic rand.Int63n downstream.
+func dialBackoff(try int) time.Duration {
+	if try < 1 {
+		return dialBackoffBase
+	}
+	backoff := dialBackoffBase << (try - 1)
+	if backoff <= 0 || backoff > dialBackoffCap {
+		return dialBackoffCap
+	}
+	return backoff
+}
+
 // dialWithRetries dials one agent, retrying CONNECTION SETUP failures
 // with exponential backoff and jitter. Mid-stream failures are never
 // retried (the caller treats them as final).
@@ -217,16 +233,13 @@ var dialFn = proto.Dial
 
 func dialWithRetries(ctx context.Context, spec HostSpec, req Request, opts Options) (*proto.Conn, error) {
 	attempts := opts.DialRetries
-	if attempts <= 0 {
+	if attempts < 0 {
 		attempts = dialRetryDefault
 	}
 	var lastErr error
 	for try := 0; try <= attempts; try++ {
 		if try > 0 {
-			backoff := dialBackoffBase << (try - 1)
-			if backoff > dialBackoffCap {
-				backoff = dialBackoffCap
-			}
+			backoff := dialBackoff(try)
 			// Full jitter in [backoff/2, backoff].
 			delay := backoff/2 + time.Duration(rand.Int63n(int64(backoff/2)+1))
 			timer := time.NewTimer(delay)

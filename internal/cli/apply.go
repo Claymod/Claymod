@@ -63,7 +63,7 @@ framed mTLS protocol. Hosts are applied to in parallel.`,
 	cmd.Flags().BoolVarP(&o.verbose, "verbose", "v", false, "print per-op detail for every host")
 	cmd.Flags().StringVar(&o.limit, "limit", "", "comma-separated hostnames to apply to (default: all targeted)")
 	cmd.Flags().IntVar(&o.maxFail, "max-fail", 0, "failed hosts tolerated before skipping the rest (-1 = run all)")
-	cmd.Flags().IntVar(&o.dialRetries, "dial-retries", 3, "connection setup retries per host (0 disables; mid-stream failures are never retried)")
+	cmd.Flags().IntVar(&o.dialRetries, "dial-retries", 3, "connection setup retries per host (0 = dial once; mid-stream failures are never retried)")
 	cmd.Flags().IntVar(&o.parallel, "parallel", runner.DefaultParallelism, "number of hosts applied to concurrently")
 	cmd.Flags().StringVar(&o.host, "host", "", "render templates for this host (default: each target host)")
 	return cmd
