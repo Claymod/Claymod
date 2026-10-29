@@ -50,6 +50,10 @@ func requestBaseURL(r *http.Request) string {
 	return scheme + "://" + r.Host
 }
 
+// EnrollScript renders the bootstrap script for a server URL. Exported
+// for the docs/unit-agreement guard tests.
+func EnrollScript(serverURL string) string { return enrollScript(serverURL) }
+
 // enrollScript renders the bootstrap script for a server URL.
 func enrollScript(serverURL string) string {
 	return strings.NewReplacer(

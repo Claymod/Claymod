@@ -1,0 +1,24 @@
+# claymod-agent.service — standalone systemd unit for the host agent.
+#
+# This is the static artifact for operators who enroll manually (the
+# `curl | sh` bootstrap generates an equivalent unit itself; a test
+# asserts the two stay in agreement). Install:
+#
+#   sudo cp docs/claymod-agent.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now claymod-agent.service
+#
+# Adjust ExecStart paths to your install (--out-dir from enroll).
+
+[Unit]
+Description=claymod host agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/claymod-agent agent --config /etc/claymod/agent.yaml
+Restart=always
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

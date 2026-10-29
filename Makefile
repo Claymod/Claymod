@@ -5,7 +5,7 @@ VERSION   ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo de
 LDFLAGS   := -s -w
 CGO       ?= 0
 
-.PHONY: all build agent agents test test-full check fmt vet tidy clean
+.PHONY: all build agent agents release test test-full check fmt vet tidy clean
 
 all: build agent
 
@@ -34,6 +34,21 @@ agents:
 	done
 	@shasum -a 256 bin/agents/claymod-agent-* | sed 's|bin/agents/||'
 
+# Release artifacts: both binaries for the main platforms + SHA256SUMS
+# (the format the README install instructions verify against).
+release:
+	@mkdir -p dist
+	@for pair in linux/amd64 linux/arm64 darwin/arm64; do \
+		os=$${pair%%/*}; arch=$${pair##*/}; \
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch $(GO) build -trimpath \
+			-ldflags "$(LDFLAGS) -X github.com/claymod/claymod/internal/cli.version=$(VERSION)" \
+			-o dist/claymod-$$os-$$arch ./cmd/claymod; \
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch $(GO) build -trimpath \
+			-ldflags "$(LDFLAGS) -X main.version=$(VERSION)" \
+			-o dist/claymod-agent-$$os-$$arch ./cmd/claymod-agent; \
+	done
+	@cd dist && shasum -a 256 claymod-* > SHA256SUMS && cat SHA256SUMS
+
 test:
 	$(GO) test ./...
 
@@ -53,4 +68,4 @@ check: fmt vet test
 	$(GO) test -race ./...
 
 clean:
-	rm -rf bin/
+	rm -rf bin/ dist/
