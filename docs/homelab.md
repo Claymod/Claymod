@@ -456,11 +456,17 @@ hang: check `wg show` handshakes on both sides, and that the VM's
 
 ### 3.1 Files (on the VPS, in `~/claymod`)
 
-`~/claymod/homelab/files/motd`:
+`~/claymod/homelab/files/motd` (static text — see the note below):
 
 ```
-Managed by claymod — host {{.Host}}
+Managed by claymod.
 ```
+
+Note the split: **`files.Copy` ships the file's bytes verbatim** — no
+template rendering. Go templates (`{{.Host}}`, `{{.Vars.…}}`) are
+rendered server-side **only** by `files.Template` (as
+`index.html.tmpl` below shows). A `{{…}}` in a copied file would land
+on the host literally.
 
 `~/claymod/homelab/files/index.html.tmpl`:
 
@@ -535,9 +541,9 @@ The second real apply reporting **0 changed** is the idempotence proof.
 ### 3.3 Verify on the VM
 
 ```sh
-curl -s localhost                    # → "hello from web01"
+curl -s localhost                    # → "hello from web01" (from the template)
 systemctl is-enabled nginx           # → enabled
-cat /etc/motd
+cat /etc/motd                        # → "Managed by claymod." (copied verbatim)
 ```
 
 Optional on the VPS — prove the apply went through the tunnel, not the
