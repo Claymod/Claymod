@@ -1,7 +1,11 @@
 package inventory
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -255,5 +259,39 @@ func TestIPAMRejectsBadNetwork(t *testing.T) {
 	}
 	if _, err := Open(filepath.Join(t.TempDir(), "inv.db"), "fd00::/64"); err == nil {
 		t.Fatal("Open accepted an IPv6 agent network")
+	}
+}
+
+// TestTokensStoredHashed: a stolen inventory.db must not grant live
+// enrollment tokens — the DB file contains no plaintext token bytes.
+func TestTokensStoredHashed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "inv.db")
+	inv, err := Open(path, testNetwork)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := "super-secret-live-token"
+	if err := inv.StoreToken(token, "web01", time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	// WAL mode: flush the log into the main file so the raw read sees
+	// every stored byte (plaintext must be absent from EITHER file).
+	if _, err := inv.db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wal, err := os.ReadFile(path + "-wal"); err == nil {
+		raw = append(raw, wal...)
+	}
+	if bytes.Contains(raw, []byte(token)) {
+		t.Fatal("inventory.db contains the plaintext token")
+	}
+	// The digest must be present (tokens remain queryable by hash).
+	sum := sha256.Sum256([]byte(token))
+	if !bytes.Contains(raw, []byte(hex.EncodeToString(sum[:]))) {
+		t.Fatal("inventory.db does not contain the token digest")
 	}
 }

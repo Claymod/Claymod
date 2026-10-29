@@ -4,7 +4,9 @@
 package inventory
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -264,8 +266,15 @@ func (inv *Inventory) UpdateHost(h *Host) error {
 	return nil
 }
 
-// StoreToken records a one-time enrollment token for hostname expiring at
-// expiresAt.
+// hashToken returns the hex SHA-256 of an enrollment token: tokens are
+// stored ONLY as digests, so a stolen inventory.db grants nothing.
+func hashToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+// StoreToken records a one-time enrollment token for hostname expiring
+// at expiresAt. Only the token DIGEST is stored.
 func (inv *Inventory) StoreToken(token, hostname string, expiresAt time.Time) error {
 	if token == "" {
 		return fmt.Errorf("token is required")
@@ -273,7 +282,7 @@ func (inv *Inventory) StoreToken(token, hostname string, expiresAt time.Time) er
 	_, err := inv.db.Exec(
 		`INSERT INTO tokens (token, hostname, created_at, expires_at)
 		 VALUES (?, ?, ?, ?)`,
-		token, hostname,
+		hashToken(token), hostname,
 		time.Now().UTC().Format(time.RFC3339Nano),
 		expiresAt.UTC().Format(time.RFC3339Nano),
 	)
@@ -289,7 +298,7 @@ func (inv *Inventory) ValidateToken(token string) (string, error) {
 	var hostname, expiresAt, consumedAt string
 	err := inv.db.QueryRow(
 		`SELECT hostname, expires_at, consumed_at FROM tokens WHERE token = ?`,
-		token,
+		hashToken(token),
 	).Scan(&hostname, &expiresAt, &consumedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", fmt.Errorf("%w: %s", ErrTokenNotFound, token)
@@ -312,7 +321,7 @@ func (inv *Inventory) ConsumeToken(token string) (string, error) {
 	var hostname, expiresAt, consumedAt string
 	err = tx.QueryRow(
 		`SELECT hostname, expires_at, consumed_at FROM tokens WHERE token = ?`,
-		token,
+		hashToken(token),
 	).Scan(&hostname, &expiresAt, &consumedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", fmt.Errorf("%w: %s", ErrTokenNotFound, token)
@@ -326,7 +335,7 @@ func (inv *Inventory) ConsumeToken(token string) (string, error) {
 	}
 	_, err = tx.Exec(
 		`UPDATE tokens SET consumed_at = ? WHERE token = ? AND consumed_at = ''`,
-		time.Now().UTC().Format(time.RFC3339Nano), token,
+		time.Now().UTC().Format(time.RFC3339Nano), hashToken(token),
 	)
 	if err != nil {
 		return "", fmt.Errorf("consume token: %w", err)

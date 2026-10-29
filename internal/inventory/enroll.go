@@ -28,7 +28,7 @@ func (inv *Inventory) EnrollHost(token, hostname, publicKey, certPEM string) (*H
 	var boundHost, expiresAt, consumedAt string
 	err = tx.QueryRow(
 		`SELECT hostname, expires_at, consumed_at FROM tokens WHERE token = ?`,
-		token,
+		hashToken(token),
 	).Scan(&boundHost, &expiresAt, &consumedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("%w: %s", ErrTokenNotFound, token)
@@ -47,7 +47,7 @@ func (inv *Inventory) EnrollHost(token, hostname, publicKey, certPEM string) (*H
 	// can flip consumed_at, so a racing enrollment loses here.
 	res, err := tx.Exec(
 		`UPDATE tokens SET consumed_at = ? WHERE token = ? AND consumed_at = ''`,
-		time.Now().UTC().Format(time.RFC3339Nano), token,
+		time.Now().UTC().Format(time.RFC3339Nano), hashToken(token),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("consume token: %w", err)
