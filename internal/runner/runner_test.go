@@ -3,9 +3,11 @@ package runner_test
 import (
 	"context"
 	"crypto/x509"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -15,6 +17,9 @@ import (
 	"github.com/claymod/claymod/internal/proto"
 	"github.com/claymod/claymod/internal/runner"
 )
+
+// issuedSerials maps agent cert serial -> hostname (revocation tests).
+var issuedSerials = map[string]string{}
 
 // testCluster starts n agents on loopback ports and returns their targets
 // plus the control-side identity and pool.
@@ -61,6 +66,10 @@ func startCluster(t *testing.T, n int) *testCluster {
 		agentID, err := proto.LoadIdentity(agentPEM, agentKey)
 		if err != nil {
 			t.Fatal(err)
+		}
+		// Record the agent's cert serial for the revocation tests.
+		if cert, err := ca.ParseCertPEM(agentPEM); err == nil {
+			issuedSerials[cert.SerialNumber.String()] = hostname
 		}
 		ln, err := proto.Listen("127.0.0.1:0", agentID, pool)
 		if err != nil {
@@ -307,5 +316,72 @@ func TestRunParallelAcrossHosts(t *testing.T) {
 	// keep it bounded so a serial regression would still pass tests fast.
 	if elapsed := time.Since(start); elapsed > 30*time.Second {
 		t.Errorf("parallel run took %v", elapsed)
+	}
+}
+
+// TestRunRefusesRevokedAgent: a host whose certificate serial the
+// IsRevoked hook reports as revoked fails before any ops flow.
+func TestRunRefusesRevokedAgent(t *testing.T) {
+	cluster := startCluster(t, 2)
+	revoked := map[string]bool{cluster.Targets[0].Hostname: true}
+	// The hook stands in for the inventory: keyed by hostname here, but
+	// production wires inv.IsRevoked (keyed by cert serial).
+	hook := func(serial string) (bool, error) {
+		return revoked[serialToHost(serial, cluster)], nil
+	}
+	dir := t.TempDir()
+	specs := []runner.HostSpec{
+		{Target: cluster.Targets[0], Ops: []proto.Op{fileOp(filepath.Join(dir, "a.txt"), "x")}},
+		{Target: cluster.Targets[1], Ops: []proto.Op{fileOp(filepath.Join(dir, "b.txt"), "x")}},
+	}
+	report, err := runner.Run(context.Background(), runner.Request{
+		Hosts:      specs,
+		Identity:   cluster.Identity,
+		ServerPool: cluster.ServerPool,
+		IsRevoked:  hook,
+	}, runner.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.Results[0].HasFailure() || report.Results[0].Err == nil {
+		t.Errorf("revoked host err = %v, want failure", report.Results[0].Err)
+	} else if !strings.Contains(report.Results[0].Err.Error(), "REVOKED") {
+		t.Errorf("err = %v, want a REVOKED error", report.Results[0].Err)
+	}
+	if report.Results[1].HasFailure() {
+		t.Errorf("unrevoked host failed: %v", report.Results[1].Err)
+	}
+}
+
+// serialToHost maps an agent serial to its hostname via the issued
+// certs recorded by startCluster (test-only helper: production keys by
+// serial directly via inv.IsRevoked).
+func serialToHost(serial string, cluster *testCluster) string {
+	if h, ok := issuedSerials[serial]; ok {
+		return h
+	}
+	return serial // unknown serial: not revoked
+}
+
+// TestRunFailsClosedOnRevocationCheckError: a hook error must fail the
+// host, never apply anyway.
+func TestRunFailsClosedOnRevocationCheckError(t *testing.T) {
+	cluster := startCluster(t, 1)
+	hook := func(serial string) (bool, error) {
+		return false, errors.New("inventory unavailable")
+	}
+	report, err := runner.Run(context.Background(), runner.Request{
+		Hosts: []runner.HostSpec{
+			{Target: cluster.Targets[0], Ops: []proto.Op{fileOp(filepath.Join(t.TempDir(), "a.txt"), "x")}},
+		},
+		Identity:   cluster.Identity,
+		ServerPool: cluster.ServerPool,
+		IsRevoked:  hook,
+	}, runner.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.Results[0].HasFailure() || !strings.Contains(report.Results[0].Err.Error(), "failing closed") {
+		t.Errorf("err = %v, want fail-closed error", report.Results[0].Err)
 	}
 }

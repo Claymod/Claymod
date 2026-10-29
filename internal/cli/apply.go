@@ -209,6 +209,7 @@ func runApply(ctx context.Context, cmd *cobra.Command, playbookFile string, o ap
 		Hosts:      specs,
 		Identity:   id,
 		ServerPool: serverPool,
+		IsRevoked:  inv.IsRevoked, // CRL-lite: refuse revoked agents
 	}, runner.Options{
 		Check:       o.check,
 		MaxFailures: o.maxFail,

@@ -117,6 +117,17 @@ func Server(raw net.Conn, timeout time.Duration) (*Conn, error) {
 // Peer returns the handshake received from the remote side.
 func (c *Conn) Peer() Handshake { return c.peer }
 
+// PeerSerial returns the hex serial of the peer's leaf certificate and
+// whether one was presented. The runner uses it to enforce CRL-lite
+// revocation before any ops flow.
+func (c *Conn) PeerSerial() (string, bool) {
+	certs := c.tls.ConnectionState().PeerCertificates
+	if len(certs) == 0 {
+		return "", false
+	}
+	return certs[0].SerialNumber.String(), true
+}
+
 // Send marshals v as a frame.
 func (c *Conn) Send(v any) error {
 	payload, err := json.Marshal(v)

@@ -46,6 +46,11 @@ type Request struct {
 	Identity proto.Identity
 	// ServerPool verifies the agents' server certificates.
 	ServerPool *x509.CertPool
+	// IsRevoked, when set, is consulted with the agent certificate's
+	// serial after the TLS handshake and before any ops are streamed:
+	// true refuses the host, an error fails the host CLOSED (never
+	// "apply anyway"). Nil disables the check (tests).
+	IsRevoked func(serial string) (bool, error)
 }
 
 // Options control execution policy.
@@ -198,6 +203,28 @@ func runHost(ctx context.Context, spec HostSpec, req Request, opts Options) Host
 		return res
 	}
 	defer conn.Close()
+
+	// CRL-lite enforcement: refuse revoked agents BEFORE any ops flow.
+	// An absent serial is impossible with mutual TLS (the agent must
+	// present a client cert), but fail closed all the same.
+	if req.IsRevoked != nil {
+		serial, ok := conn.PeerSerial()
+		if !ok {
+			res.Err = fmt.Errorf("%s: agent presented no certificate", spec.Target.Hostname)
+			return res
+		}
+		revoked, err := req.IsRevoked(serial)
+		if err != nil {
+			res.Err = fmt.Errorf("%s: revocation check failed (failing closed): %w",
+				spec.Target.Hostname, err)
+			return res
+		}
+		if revoked {
+			res.Err = fmt.Errorf("%s: agent certificate (serial %s) is REVOKED",
+				spec.Target.Hostname, serial)
+			return res
+		}
+	}
 
 	ops, summary, err := ApplyStream(ctx, conn, spec.Ops, opts.Check, opts.Timeout)
 	res.Ops = ops
