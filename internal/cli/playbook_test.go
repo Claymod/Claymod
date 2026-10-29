@@ -162,6 +162,98 @@ resources {
 	}
 }
 
+// TestPlaybookValidateFromForeignCWD pins the CWD-independence
+// guarantee: the std resolves from the embedded schema even with no
+// CLAYMOD_SCHEMA_DIR and a working directory with no ./pkl.
+func TestPlaybookValidateFromForeignCWD(t *testing.T) {
+	requirePklCLI(t)
+	t.Setenv("CLAYMOD_SCHEMA_DIR", "")
+
+	// Capture the playbook path before leaving the repo tree.
+	root := repoRoot(t)
+	playbookFile := filepath.Join(root, "examples", "basic-setup", "playbook.pkl")
+	t.Chdir(t.TempDir())
+
+	out := new(bytes.Buffer)
+	cmd := newRootCmd()
+	cmd.SetOut(out)
+	cmd.SetErr(out)
+	cmd.SetArgs([]string{"playbook", "validate", playbookFile})
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("validate from foreign CWD: %v (output: %s)", err, out.String())
+	}
+	if !strings.Contains(out.String(), "playbook OK: 3 resource(s)") {
+		t.Errorf("output = %q", out.String())
+	}
+}
+
+// TestPlaybookModulePathFlag covers extra lookup dirs from the
+// --module-path flag and CLAYMOD_MODULE_PATH.
+func TestPlaybookModulePathFlag(t *testing.T) {
+	requirePklCLI(t)
+	t.Setenv("CLAYMOD_SCHEMA_DIR", "")
+	t.Chdir(t.TempDir())
+
+	// Module-path URIs resolve under the passed dir (like the real std:
+	// dir "pkl" serving modulepath:/claymod/...), so the fixture needs a
+	// parent holding ext/greeting.pkl.
+	extRoot := t.TempDir()
+	ext := filepath.Join(extRoot, "ext")
+	if err := os.MkdirAll(ext, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ext, "greeting.pkl"),
+		[]byte("module ext\n\ntarget = \"/etc/motd-ext\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	playbookFile := filepath.Join(dir, "playbook.pkl")
+	if err := os.WriteFile(playbookFile, []byte(`amends "modulepath:/claymod/base.pkl"
+import "modulepath:/claymod/std/files.pkl"
+import "modulepath:/ext/greeting.pkl" as ext
+hosts { "web01" }
+resources {
+  new files.Copy { name = "motd"; source = "motd.txt"; dest = ext.target }
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	run := func(t *testing.T, args ...string) error {
+		t.Helper()
+		out := new(bytes.Buffer)
+		cmd := newRootCmd()
+		cmd.SetOut(out)
+		cmd.SetErr(out)
+		cmd.SetArgs(args)
+		err := cmd.ExecuteContext(context.Background())
+		if err != nil && !strings.Contains(err.Error(), "Cannot find module") {
+			t.Fatalf("unexpected error: %v (output: %s)", err, out.String())
+		}
+		return err
+	}
+
+	// Without the dir: module resolution fails, naming the searched path.
+	err := run(t, "playbook", "validate", playbookFile)
+	if err == nil {
+		t.Fatal("validate resolved modulepath:/ext without an extra module path")
+	}
+	if !strings.Contains(err.Error(), "searched module path:") {
+		t.Errorf("error missing searched-path annotation: %v", err)
+	}
+
+	// Via the flag: resolves.
+	if err := run(t, "playbook", "validate", "--module-path", extRoot, playbookFile); err != nil {
+		t.Fatalf("validate --module-path: %v", err)
+	}
+
+	// Via the env var: resolves.
+	t.Setenv("CLAYMOD_MODULE_PATH", extRoot)
+	if err := run(t, "playbook", "validate", playbookFile); err != nil {
+		t.Fatalf("validate with CLAYMOD_MODULE_PATH: %v", err)
+	}
+}
+
 func TestPlaybookMissingFile(t *testing.T) {
 	out := new(bytes.Buffer)
 	cmd := newRootCmd()
