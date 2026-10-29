@@ -22,3 +22,6 @@ coverage.*
 
 # verify-readme demo artifacts
 /demo-verify/
+
+# release artifacts (make release)
+/dist/
