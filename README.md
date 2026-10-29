@@ -260,6 +260,9 @@ certificate, missing client certificate, untrusted server).
 
 ## Status
 
-Phases 0–8 of the plan are implemented and tested (`go test -race ./...`
-clean). Remaining: hardening (Phase 9) — fuzzing the frame codec,
-connection limits, reconnection, graceful shutdown, systemd unit.
+Phases 0–9 of the plan are implemented and tested (`go test -race ./...`
+clean). Phase 9 hardening: CRL-lite enforcement on the dial path, fuzzed
+wire codec, tokens hashed at rest, agent session caps + panic isolation,
+bounded dial retries, provable graceful shutdown, static systemd unit +
+release target + CI (see the hardening checklist in
+[docs/security.md](docs/security.md#hardening-checklist)).

@@ -177,3 +177,20 @@ surface.
 cases in this document: anonymous client, rogue certificate, untrusted
 server, single-use token. Run it after any change to enrollment, the CA
 or the protocol.
+
+## Hardening checklist
+
+What Phase 9 added, and where its guarantees live:
+
+| Guarantee | Mechanism | Proof |
+|---|---|---|
+| Revoked agents refused | runner consults the inventory's revocation table with the agent's cert serial after the TLS handshake, before any ops; hook errors fail CLOSED | `TestRunRefusesRevokedAgent` |
+| Tokens useless if the DB leaks | tokens stored only as SHA-256 digests (plaintext in neither `inventory.db` nor its WAL) | `TestTokensStoredHashed` |
+| Bounded agent memory | session semaphore (default 32, `MaxConns`); output capture capped at 1 MiB | `TestAgentCapsConcurrentSessions` |
+| Hostile op cannot kill the agent | per-session `recover`: the connection dies, the daemon keeps serving | `TestAgentSurvivesPanickingSession` |
+| Bounded dial failures | connection-setup retries with exponential backoff + jitter (default 3, `--dial-retries`); mid-stream failures are NEVER retried (double-apply hazard) | `TestDialWithRetriesRecoversTransiently` |
+| SIGTERM never hangs | in-flight commands are killed via `exec.CommandContext`; the client sees the op fail in the summary, `Serve` drains and returns; idle shutdown is prompt | `TestGracefulShutdownBoundsInFlightApply` |
+| Malformed wire input cannot panic or over-allocate | 8 MiB frame cap checked before allocation; fuzz targets (`FuzzReadFrame`, `FuzzHandshakeDecode`, millions of execs clean) | `internal/proto/fuzz_test.go` |
+| Secrets never logged | regression test runs failing + successful enrollments through a debug-level logger and asserts neither the token nor key material appears | `TestSecretsNeverLogged` |
+| Release integrity | `make release` produces `dist/` + `SHA256SUMS` (the format the README verifies against) | CI builds both binaries |
+| WireGuard port rule | guard test pins every default to 51821 — never the standard 51820 (users run their own tunnels there) | `TestWireGuardDefaultPortNever51820` |
