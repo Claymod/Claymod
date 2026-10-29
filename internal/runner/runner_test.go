@@ -385,3 +385,26 @@ func TestRunFailsClosedOnRevocationCheckError(t *testing.T) {
 		t.Errorf("err = %v, want fail-closed error", report.Results[0].Err)
 	}
 }
+
+// TestRunDialRetriesExhausted: with DialRetries=1 a permanently
+// unreachable host fails with the attempt count in the error.
+func TestRunDialRetriesExhausted(t *testing.T) {
+	cluster := startCluster(t, 1)
+	report, err := runner.Run(context.Background(), runner.Request{
+		Hosts: []runner.HostSpec{{
+			Target: runner.Target{Hostname: "ghost", Addr: "127.0.0.1:1", ServerName: "localhost"},
+			Ops:    []proto.Op{fileOp(filepath.Join(t.TempDir(), "x.txt"), "x")},
+		}},
+		Identity:   cluster.Identity,
+		ServerPool: cluster.ServerPool,
+	}, runner.Options{DialRetries: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.Results[0].HasFailure() {
+		t.Fatal("unreachable host did not fail")
+	}
+	if !strings.Contains(report.Results[0].Err.Error(), "after 2 attempt") {
+		t.Errorf("err = %v, want attempt count", report.Results[0].Err)
+	}
+}

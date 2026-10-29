@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -66,6 +67,11 @@ type Options struct {
 	// Timeout optionally caps one agent-side Apply run (0 = agent
 	// default).
 	Timeout time.Duration
+	// DialRetries is how many times a failed CONNECTION SETUP is
+	// retried with exponential backoff + jitter (0 = 3). Only dial
+	// errors are retried: a failure after ops started streaming is
+	// final — replaying mid-stream could double-apply.
+	DialRetries int
 }
 
 // HostResult is the outcome for one host.
@@ -195,11 +201,60 @@ func aborted(ctx context.Context, opts Options, failed *atomic.Int32) bool {
 }
 
 // runHost dials one agent and streams a full Apply run.
+// dialRetryDefaults: attempts = DialRetries+1, base backoff 500ms, cap 5s.
+const (
+	dialRetryDefault = 3
+	dialBackoffBase  = 500 * time.Millisecond
+	dialBackoffCap   = 5 * time.Second
+)
+
+// dialWithRetries dials one agent, retrying CONNECTION SETUP failures
+// with exponential backoff and jitter. Mid-stream failures are never
+// retried (the caller treats them as final).
+// dialFn is the connection-setup function; a package-level var so
+// tests can simulate transient dial failures without network tricks.
+var dialFn = proto.Dial
+
+func dialWithRetries(ctx context.Context, spec HostSpec, req Request, opts Options) (*proto.Conn, error) {
+	attempts := opts.DialRetries
+	if attempts <= 0 {
+		attempts = dialRetryDefault
+	}
+	var lastErr error
+	for try := 0; try <= attempts; try++ {
+		if try > 0 {
+			backoff := dialBackoffBase << (try - 1)
+			if backoff > dialBackoffCap {
+				backoff = dialBackoffCap
+			}
+			// Full jitter in [backoff/2, backoff].
+			delay := backoff/2 + time.Duration(rand.Int63n(int64(backoff/2)+1))
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return nil, fmt.Errorf("dial %s (%s): %w", spec.Target.Hostname, spec.Target.Addr, ctx.Err())
+			case <-timer.C:
+			}
+		}
+		conn, err := dialFn(spec.Target.Addr, spec.Target.ServerName, req.Identity, req.ServerPool)
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	return nil, fmt.Errorf("dial %s (%s) after %d attempt(s): %w",
+		spec.Target.Hostname, spec.Target.Addr, attempts+1, lastErr)
+}
+
 func runHost(ctx context.Context, spec HostSpec, req Request, opts Options) HostResult {
 	res := HostResult{Hostname: spec.Target.Hostname}
-	conn, err := proto.Dial(spec.Target.Addr, spec.Target.ServerName, req.Identity, req.ServerPool)
+	conn, err := dialWithRetries(ctx, spec, req, opts)
 	if err != nil {
-		res.Err = fmt.Errorf("dial %s (%s): %w", spec.Target.Hostname, spec.Target.Addr, err)
+		res.Err = err
 		return res
 	}
 	defer conn.Close()
