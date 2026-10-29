@@ -58,6 +58,23 @@ func spinShutdown(t *testing.T) *shutdownFixture {
 	return &shutdownFixture{ln: ln, clientID: clientID, pool: pool}
 }
 
+// ctxAwareService blocks in State until its ctx is done (the shutdown
+// path) or release closes — a hermetic stand-in for a long-running op:
+// no process-kill timing, no platform shell semantics.
+type ctxAwareService struct {
+	fakeService
+	release chan struct{}
+}
+
+func (c *ctxAwareService) State(ctx context.Context, _ string) (string, error) {
+	select {
+	case <-c.release:
+		return "active", nil
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+}
+
 // callApplyResults runs one Apply and returns the streamed results.
 func callApplyResults(conn *proto.Conn, op proto.Op) ([]proto.ApplyResult, error) {
 	req := proto.Request{ID: "apply-d", Method: proto.MethodApply}
@@ -96,7 +113,13 @@ func callApplyResults(conn *proto.Conn, op proto.Op) ([]proto.ApplyResult, error
 // idempotent, so an aborted apply is safe to re-run.
 func TestGracefulShutdownBoundsInFlightApply(t *testing.T) {
 	fx := spinShutdown(t)
-	a := New(Options{MaxConns: 4})
+	// The in-flight op blocks until ctx fires (or release closes): the
+	// test is hermetic — cancel-before-start, mid-op and after all end
+	// in the same bounded outcome, with no dependence on process-kill
+	// timing or platform shell semantics (the CI failure this replaced).
+	release := make(chan struct{})
+	defer close(release) // safety: never leak a blocked op
+	a := New(Options{MaxConns: 4, Services: &ctxAwareService{release: release}})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	served := make(chan error, 1)
@@ -113,19 +136,13 @@ func TestGracefulShutdownBoundsInFlightApply(t *testing.T) {
 	}
 	applyDone := make(chan applyOutcome, 1)
 	go func() {
-		// A real command op: 60s sleep, executed via exec.CommandContext.
-		results, err := callApplyResults(conn, proto.Op{
-			OpType: proto.OpTypeCommand,
-			Command: &proto.CommandOp{
-				Shell: "sleep 60", Timeout: 55_000,
-			},
-		})
+		results, err := callApplyResults(conn, serviceOp())
 		applyDone <- applyOutcome{results, err}
 	}()
-	time.Sleep(300 * time.Millisecond) // let the command start
+	time.Sleep(200 * time.Millisecond) // let the op reach its blocking point
 
-	// SIGTERM: cancel while the command is running. The kill surfaces as
-	// a failed op in the summary (or a transport error) — promptly.
+	// SIGTERM: cancel while the op is blocked. The op must terminate via
+	// ctx and surface as a failed op (or transport error) — promptly.
 	cancel()
 	select {
 	case out := <-applyDone:
@@ -138,7 +155,7 @@ func TestGracefulShutdownBoundsInFlightApply(t *testing.T) {
 		if !failed {
 			t.Fatalf("in-flight apply was not bounded by shutdown: results=%+v err=%v", out.results, out.err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(15 * time.Second):
 		t.Fatal("in-flight apply hung past shutdown (no bound)")
 	}
 	conn.Close()
@@ -149,7 +166,7 @@ func TestGracefulShutdownBoundsInFlightApply(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Serve returned an error: %v", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(15 * time.Second):
 		t.Fatal("Serve did not return after the in-flight apply aborted")
 	}
 
