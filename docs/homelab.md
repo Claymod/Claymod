@@ -91,14 +91,33 @@ install -m 0755 claymod-linux-<arch> /usr/local/bin/claymod
 ```
 
 Optionally pre-stage the agent binaries for hosts to download over the
-bootstrap channel (the one-liner and air-gap flow need this;
-§1.3 adds `--agent-bin-dir`):
+bootstrap channel (the one-liner and air-gap flow need this — the
+script fetches its agent from the server):
 
 ```sh
 curl -fsSL -O $BASE/claymod-agent-linux-<arch>
 grep "claymod-agent-linux-<arch>$" SHA256SUMS | sha256sum -c -
 mkdir -p ~/claymod/agents
 install -m 0755 claymod-agent-linux-<arch> ~/claymod/agents/
+```
+
+**How binaries are served.** `serve` offers whatever is in one
+directory — `--agent-bin-dir` (default `<data-dir>/agents`) — at
+`GET /agent/<goos>/<goarch>` (plus a computed `.sha256` sidecar). The
+filename **is** the mapping: `claymod-agent-<goos>-<goarch>`, i.e. the
+release asset name dropped into that directory unchanged. Keep the
+release names — `claymod-agent-linux-amd64` is what
+`/agent/linux/amd64` serves; a file named just `claymod-agent` is
+invisible to it. With the staging dir above, §1.3 passes
+`--agent-bin-dir ~/claymod/agents`. At startup the serve log tells you
+which case you are in:
+
+```
+agent binaries offered for download   dir=…   ← working (plus one
+                                                 "agent binary <os>-<arch> <sha256>"
+                                                 line per binary)
+no agent binaries to serve …          dir=…   ← empty/wrong dir: every
+                                                 /agent/… request 404s
 ```
 
 The repo is still needed for the PKL schema and the pkl bootstrap
@@ -135,8 +154,15 @@ claymod serve \
   --wg-interface claymod0 \
   --wg-endpoint VPS_IP:51821 \
   --agent-network 10.42.0.0/24 \
+  --agent-bin-dir ~/claymod/agents \
   --wg-backend wgctrl
 ```
+
+`--agent-bin-dir ~/claymod/agents` is what makes the one-liner work:
+the bootstrap script downloads the agent from
+`GET /agent/<goos>/<goarch>`, which serves files from that directory
+(§1.2). Without it, serve looks in `<data-dir>/agents` (empty) and
+every agent download 404s.
 
 One fingerprint is printed — the **CA fingerprint**, the single pin of
 the deployment:
@@ -208,7 +234,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-ExecStart=/usr/local/bin/claymod serve --data-dir /root/claymod-data --bootstrap-listen 0.0.0.0:8443 --server-name vps --wg-interface claymod0 --wg-endpoint VPS_IP:51821 --agent-network 10.42.0.0/24 --wg-backend wgctrl
+ExecStart=/usr/local/bin/claymod serve --data-dir /root/claymod-data --bootstrap-listen 0.0.0.0:8443 --server-name vps --wg-interface claymod0 --wg-endpoint VPS_IP:51821 --agent-network 10.42.0.0/24 --agent-bin-dir /root/claymod/agents --wg-backend wgctrl
 Restart=always
 RestartSec=5
 
@@ -529,6 +555,7 @@ tcpdump -ni any port 2323            # then run an apply in another shell
 | enroll: `fingerprint mismatch` (`--ca-pin`) | the pin is the **CA** fingerprint ("CA fingerprint (the pin for agent enroll …)" line), not the TLS leaf's — compute it with `curl -fsSLk https://vps:8443/ca.pem \| openssl x509 -outform DER \| sha256sum` |
 | `curl: (60) SSL certificate problem` fetching `/enroll.sh` | missing `-k`: the bootstrap cert is internal-CA-issued (see §2.3) |
 | one-liner exits 0 but nothing happened | `curl | sh` reports sh's exit code — a failed fetch looks like success; watch for the `==` progress lines (§2.3) |
+| one-liner: `curl: (22) … 404` on the agent download | serve isn't serving binaries: `--agent-bin-dir` missing or pointing at an empty dir (§1.2 "How binaries are served" — the startup log says `no agent binaries to serve … dir=…`). Check the file is named `claymod-agent-<goos>-<goarch>` (release asset name) in that dir |
 | one-liner: could not resolve `vps` | use the bare IP (`https://VPS_IP:8443`) directly, or add a §2.1 hosts entry, or pass `--server https://<name>:8443` |
 | agent dead after a VM reboot | the tunnel was not re-created — run `sudo claymod-agent wg-setup` (§2.5 reboot note) |
 | `wg show` empty on the VPS | no peer installed — check `serve` ran with `--wg-backend wgctrl` (not `fake`) and watch its log for the `wireguard configuration written` line |

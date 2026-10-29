@@ -143,10 +143,14 @@ shasum -a 256 claymod-agent     # compare with the served digest
 chmod +x claymod-agent
 ```
 
-`claymod serve --agent-bin-dir` (default `<data-dir>/agents`) exposes
-binaries placed there (`make agents` cross-compiles the matrix and
-prints sha256 sums). `serve` logs each digest at startup — verify
-against that channel out-of-band. Then enroll and run as usual:
+`claymod serve --agent-bin-dir <dir>` (default `<data-dir>/agents`)
+exposes binaries placed there: the filename is the mapping —
+`GET /agent/linux/amd64` serves `<dir>/claymod-agent-linux-amd64`
+(i.e. the GitHub release asset name, unchanged). Drop the release
+assets in (or `make agents` to cross-compile); a file named just
+`claymod-agent` is invisible to the endpoint. `serve` logs each digest
+at startup — verify against that channel out-of-band. Then enroll and
+run as usual:
 
 ```sh
 ./claymod-agent enroll --server https://control:8443 --token ... \
