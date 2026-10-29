@@ -6,6 +6,24 @@ import (
 	"testing"
 )
 
+func TestExpandHome(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home directory")
+	}
+	for _, tt := range []struct{ in, want string }{
+		{"~/claymod/agents", filepath.Join(home, "claymod/agents")},
+		{"~", home},
+		{"/etc/claymod/agents", "/etc/claymod/agents"}, // absolute: unchanged
+		{"rel/agents", "rel/agents"},                   // relative: unchanged
+		{"~user/agents", "~user/agents"},               // other user's: unchanged
+	} {
+		if got := ExpandHome(tt.in); got != tt.want {
+			t.Errorf("ExpandHome(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
 func TestWriteFileAtomicCreates(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "target.txt")
 	if err := WriteFileAtomic(path, []byte("hello"), 0o644); err != nil {

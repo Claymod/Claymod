@@ -24,6 +24,7 @@ import (
 	"github.com/claymod/claymod/internal/enrollserver"
 	"github.com/claymod/claymod/internal/inventory"
 	"github.com/claymod/claymod/internal/state"
+	"github.com/claymod/claymod/internal/util"
 	"github.com/claymod/claymod/internal/wgmanager"
 	"github.com/claymod/claymod/internal/wgmgr"
 )
@@ -167,6 +168,10 @@ func runServe(ctx context.Context, cmd *cobra.Command, o serveOptions) error {
 	if agentDir == "" {
 		agentDir = filepath.Join(cfg.DataDir, "agents")
 	}
+	// Expand "~/" (a systemd unit's ExecStart has no shell, so a
+	// --agent-bin-dir ~/claymod/agents would otherwise name a
+	// directory literally called "~").
+	agentDir = util.ExpandHome(agentDir)
 	enrollSrv := enrollserver.NewServer(inv, st.CA, wgMgr, log)
 	enrollSrv.AgentBinDir = agentDir
 	if digests, err := enrollserver.AgentDigests(agentDir); err == nil && len(digests) > 0 {
@@ -174,8 +179,11 @@ func runServe(ctx context.Context, cmd *cobra.Command, o serveOptions) error {
 		for _, d := range digests {
 			cmd.Printf("agent binary %s\n", d)
 		}
+	} else if _, err := os.Stat(agentDir); err != nil {
+		log.Warn("no agent binaries to serve: directory does not exist (create it and drop the release assets claymod-agent-<goos>-<goarch> in)",
+			"dir", agentDir)
 	} else {
-		log.Info("no agent binaries to serve (place them in the dir to offer them during bootstrap)",
+		log.Warn("no agent binaries to serve: no claymod-agent-<goos>-<goarch> files here (release asset names, e.g. claymod-agent-linux-amd64)",
 			"dir", agentDir)
 	}
 	mux := enrollSrv.Handler()

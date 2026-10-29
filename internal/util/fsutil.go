@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // WriteFileAtomic writes data to path atomically: the content is written
@@ -35,6 +36,20 @@ func WriteFileAtomic(path string, data []byte, mode os.FileMode) error {
 		return fmt.Errorf("rename temp file: %w", err)
 	}
 	return nil
+}
+
+// ExpandHome expands a leading "~/" (or a bare "~") in path to the
+// current user's home directory. Needed because systemd units and other
+// non-shell invocations pass "~" through literally: a flag like
+// --agent-bin-dir ~/claymod/agents would otherwise name a directory
+// called "~". Anything else is returned unchanged.
+func ExpandHome(path string) string {
+	if path == "~" || strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, strings.TrimPrefix(path, "~"))
+		}
+	}
+	return path
 }
 
 // CopyFile copies src to dst preserving src's permission bits.
