@@ -37,6 +37,7 @@ type applyOptions struct {
 	dialRetries   int
 	parallel      int
 	host          string
+	modulePaths   []string
 }
 
 func newPlaybookApplyCmd() *cobra.Command {
@@ -66,6 +67,7 @@ framed mTLS protocol. Hosts are applied to in parallel.`,
 	cmd.Flags().IntVar(&o.dialRetries, "dial-retries", 3, "connection setup retries per host (0 = dial once; mid-stream failures are never retried)")
 	cmd.Flags().IntVar(&o.parallel, "parallel", runner.DefaultParallelism, "number of hosts applied to concurrently")
 	cmd.Flags().StringVar(&o.host, "host", "", "render templates for this host (default: each target host)")
+	addModulePathFlag(cmd, &o.modulePaths)
 	return cmd
 }
 
@@ -74,7 +76,7 @@ framed mTLS protocol. Hosts are applied to in parallel.`,
 func runApply(ctx context.Context, cmd *cobra.Command, playbookFile string, o applyOptions) error {
 	out := cmd.OutOrStdout()
 
-	pb, err := loadPlaybook(cmd, playbookFile)
+	pb, err := loadPlaybook(cmd, playbookFile, o.modulePaths)
 	if err != nil {
 		return err
 	}
