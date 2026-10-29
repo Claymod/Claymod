@@ -109,16 +109,28 @@ release asset name dropped into that directory unchanged. Keep the
 release names — `claymod-agent-linux-amd64` is what
 `/agent/linux/amd64` serves; a file named just `claymod-agent` is
 invisible to it. With the staging dir above, §1.3 passes
-`--agent-bin-dir ~/claymod/agents`. At startup the serve log tells you
-which case you are in:
+`--agent-bin-dir ~/claymod/agents`.
+
+`~` is expanded by claymod itself, so `~/claymod/agents` works even in
+a systemd unit (whose `ExecStart` has no shell) — but an absolute path
+(`$HOME/claymod/agents` written out, e.g. `/root/claymod/agents`) is
+the safer habit in units and scripts. At startup the serve log tells
+you which case you are in:
 
 ```
-agent binaries offered for download   dir=…   ← working (plus one
-                                                 "agent binary <os>-<arch> <sha256>"
-                                                 line per binary)
-no agent binaries to serve …          dir=…   ← empty/wrong dir: every
-                                                 /agent/… request 404s
+agent binaries offered for download        dir=…  ← working (plus one
+                                                    "agent binary <os>-<arch>
+                                                    <sha256>" line per binary)
+… no agent binaries to serve: directory
+  does not exist …                         dir=…  ← wrong path (watch for a
+                                                    literal ~ in old configs)
+… no agent binaries to serve: no
+  claymod-agent-<goos>-<goarch> files …    dir=…  ← dir exists but is empty /
+                                                    wrongly named files
 ```
+
+Any of the last two lines means every `/agent/…` request (and therefore
+the one-liner) 404s.
 
 The repo is still needed for the PKL schema and the pkl bootstrap
 script (copy from the workstation, or `git clone` on the VPS):
@@ -555,7 +567,7 @@ tcpdump -ni any port 2323            # then run an apply in another shell
 | enroll: `fingerprint mismatch` (`--ca-pin`) | the pin is the **CA** fingerprint ("CA fingerprint (the pin for agent enroll …)" line), not the TLS leaf's — compute it with `curl -fsSLk https://vps:8443/ca.pem \| openssl x509 -outform DER \| sha256sum` |
 | `curl: (60) SSL certificate problem` fetching `/enroll.sh` | missing `-k`: the bootstrap cert is internal-CA-issued (see §2.3) |
 | one-liner exits 0 but nothing happened | `curl | sh` reports sh's exit code — a failed fetch looks like success; watch for the `==` progress lines (§2.3) |
-| one-liner: `curl: (22) … 404` on the agent download | serve isn't serving binaries: `--agent-bin-dir` missing or pointing at an empty dir (§1.2 "How binaries are served" — the startup log says `no agent binaries to serve … dir=…`). Check the file is named `claymod-agent-<goos>-<goarch>` (release asset name) in that dir |
+| one-liner: `curl: (22) … 404` on the agent download | serve isn't serving binaries — read the startup log (§1.2 "How binaries are served"): `directory does not exist` = wrong path (check for an unexpanded `~` in the unit: `dir=~/…` literally); `no claymod-agent-<goos>-<goarch> files here` = dir exists but the files are missing or misnamed (keep the release asset names) |
 | one-liner: could not resolve `vps` | use the bare IP (`https://VPS_IP:8443`) directly, or add a §2.1 hosts entry, or pass `--server https://<name>:8443` |
 | agent dead after a VM reboot | the tunnel was not re-created — run `sudo claymod-agent wg-setup` (§2.5 reboot note) |
 | `wg show` empty on the VPS | no peer installed — check `serve` ran with `--wg-backend wgctrl` (not `fake`) and watch its log for the `wireguard configuration written` line |
