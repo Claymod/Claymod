@@ -73,3 +73,91 @@ class Directory extends base.Resource {
   /// Group name or numeric gid.
   group: String = ""
 }
+
+/// Writes inline text content to the host (like Copy, but the text
+/// lives in the playbook). Content is text: it travels in the op as a
+/// UTF-8 string (see the note on text-only file content in
+/// docs/playbooks.md).
+class Content extends base.Resource {
+  type = "std.files.Content"
+
+  /// Literal file content (not templated — use files.Template for that).
+  content: String
+
+  /// Absolute destination path on the host.
+  dest: String
+
+  /// Octal file mode (e.g. "0644").
+  mode: String = "0644"
+
+  /// Owner user name or numeric uid (empty = leave unchanged).
+  owner: String = ""
+
+  /// Group name or numeric gid (empty = leave unchanged).
+  group: String = ""
+
+  /// Keep a `.bak` copy of any file overwritten.
+  backup: Boolean = false
+}
+
+/// Ensures one exact line is present in (or absent from) a file.
+/// Idempotent: adding appends the line at the end when missing; removing
+/// rewrites the file in place (mode/owner preserved). The line must be a
+/// single line (no newlines).
+class Line extends base.Resource {
+  type = "std.files.Line"
+
+  /// Absolute path of the file on the host.
+  path: String
+
+  /// The exact line (full-line match, not a substring).
+  line: String
+
+  /// "present" (default) or "absent".
+  ensure: String = "present"
+}
+
+/// Ensures `path` is a symlink to `target`. With `force = true` a
+/// non-symlink occupying the path is replaced; with `force = false`
+/// (default) the apply fails loudly instead of clobbering.
+class Symlink extends base.Resource {
+  type = "std.files.Symlink"
+
+  /// Absolute path of the symlink on the host.
+  path: String
+
+  /// What the symlink points to (relative targets are allowed).
+  target: String
+
+  /// Replace a non-symlink occupying `path`.
+  force: Boolean = false
+}
+
+/// Downloads a file on the control server at compile time and ships the
+/// content to the host like Copy. Optional `sha256` (lowercase hex) is
+/// verified server-side before anything is sent. Content is text (see
+/// the text-only note in docs/playbooks.md).
+class Fetch extends base.Resource {
+  type = "std.files.Fetch"
+
+  /// URL to fetch (https or http; redirects are followed).
+  url: String
+
+  /// Absolute destination path on the host.
+  dest: String
+
+  /// Expected SHA-256 of the body (lowercase hex; empty = unchecked).
+  sha256: String = ""
+
+  /// Octal file mode (e.g. "0644").
+  mode: String = "0644"
+
+  /// Owner user name or numeric uid (empty = leave unchanged).
+  owner: String = ""
+
+  /// Group name or numeric gid (empty = leave unchanged).
+  group: String = ""
+
+  /// Keep a `.bak` copy of any file overwritten.
+  backup: Boolean = false
+}
