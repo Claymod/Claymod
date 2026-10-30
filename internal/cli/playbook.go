@@ -38,6 +38,7 @@ func newPlaybookCmd() *cobra.Command {
 		Long: `Playbook commands evaluate a PKL playbook through the pkl CLI
 (server-side) and check it before applying to hosts.`,
 	}
+	cmd.AddCommand(newPlaybookInitCmd())
 	cmd.AddCommand(newPlaybookValidateCmd())
 	cmd.AddCommand(newPlaybookPlanCmd())
 	cmd.AddCommand(newPlaybookApplyCmd())
