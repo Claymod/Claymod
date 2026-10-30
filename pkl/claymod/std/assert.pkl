@@ -1,0 +1,51 @@
+/// Post-apply assertions. An assertion that fails fails the apply for
+/// that host (like any failed op) — pair them with `dependsOn` to
+/// verify the resources they check, e.g. a service restart before
+/// asserting its port answers.
+///
+/// Assertions run the same primitive Command op as std.commands: they
+/// are ordinary operations with assertion semantics (non-zero exit =
+/// failed assertion), so agents need nothing new.
+module claymod.std.assert
+
+import "modulepath:/claymod/base.pkl"
+
+/// Asserts a shell command exits 0 on the host.
+///
+///   new assert.Command {
+///     name = "app-responds"
+///     command = "curl -fsS http://127.0.0.1:8080/health"
+///     dependsOn { "restart-app" }
+///   }
+class Command extends base.Resource {
+  type = "std.assert.Command"
+
+  /// The command to run under /bin/sh -c; non-zero exit fails the
+  /// assertion (stderr is captured and reported).
+  command: String
+
+  /// Timeout in milliseconds (0 = agent default).
+  timeout: Int = 0
+}
+
+/// Asserts a file contains a fixed string (grep -F: literal, no regex).
+/// A missing file fails the assertion.
+class FileContains extends base.Resource {
+  type = "std.assert.FileContains"
+
+  /// Absolute path of the file on the host.
+  path: String
+
+  /// The literal string to look for (single line).
+  pattern: String
+}
+
+/// Asserts something is LISTENING on a TCP port (any interface).
+/// Linux: uses `ss` (systemd distros) or `netstat` (busybox); the
+/// assertion fails with a clear error when neither exists.
+class PortListening extends base.Resource {
+  type = "std.assert.PortListening"
+
+  /// TCP port to check (1-65535).
+  port: Int
+}
