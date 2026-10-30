@@ -63,6 +63,8 @@ var knownTypes = map[string]bool{
 	"std.commands.Shell":  true,
 	"std.commands.Script": true,
 	"std.service.Unit":    true,
+	"std.sysctl.Sysctl":   true,
+	"std.cron.Entry":      true,
 }
 
 // KnownType reports whether the resource type is supported.

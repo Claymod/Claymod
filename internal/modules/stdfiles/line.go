@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/claymod/claymod/internal/modules"
+	"github.com/claymod/claymod/internal/modules/shell"
 	"github.com/claymod/claymod/internal/playbook"
 	"github.com/claymod/claymod/internal/proto"
 )
@@ -27,11 +28,9 @@ type SymlinkResource struct {
 	Force  bool   `json:"force"`
 }
 
-// shellQuote single-quotes s for POSIX sh (recipes and guards run under
-// /bin/sh -c on the host).
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
-}
+// shellQuote single-quotes s for POSIX sh (see the shell package); a
+// local alias keeps the recipes below readable.
+func shellQuote(s string) string { return shell.Quote(s) }
 
 // compileLine emits a guarded Command op that appends the line (present)
 // or rewrites the file without it (absent). Both recipes are idempotent:

@@ -1,0 +1,26 @@
+/// Cron job entries managed via crontab(1) — the invoking user's
+/// crontab (the agent's user, typically root). Deliberately not
+/// /etc/cron.d: its syntax and availability vary across distros, while
+/// crontab(1) is everywhere.
+///
+/// Each entry is tagged with a `# claymod:<name>` marker comment, which
+/// makes updates and removals exact and idempotent.
+module claymod.std.cron
+
+import "modulepath:/claymod/base.pkl"
+
+/// Ensures one cron entry is present in (or absent from) the crontab.
+/// Idempotent: skipped when the exact marked entry is already installed.
+class Entry extends base.Resource {
+  type = "std.cron.Entry"
+
+  /// Crontab(5) schedule: five fields ("0 3 * * *") or an @shortcut
+  /// ("@daily"). The schedule must be a single line.
+  schedule: String
+
+  /// Command to run (single line; the marker comment trails it).
+  command: String
+
+  /// "present" (default) or "absent".
+  ensure: String = "present"
+}

@@ -1,0 +1,22 @@
+/// Runtime kernel sysctl settings (Linux, macOS and BSD sysctl(8) —
+/// `sysctl -n key` reads and `sysctl key=value` writes on procps,
+/// busybox and BSD implementations alike).
+///
+/// Runtime-only by design: persistence across reboots is an explicit
+/// std.files write to /etc/sysctl.d/ (see docs/playbooks.md).
+module claymod.std.sysctl
+
+import "modulepath:/claymod/base.pkl"
+
+/// Sets a kernel sysctl key to a value at runtime. Idempotent: skipped
+/// when `sysctl -n key` already reports the wanted value.
+class Sysctl extends base.Resource {
+  type = "std.sysctl.Sysctl"
+
+  /// Sysctl key, dotted ("net.ipv4.ip_forward") or slashed
+  /// ("net/ipv4/ip_forward") form.
+  key: String
+
+  /// Desired value (never empty).
+  value: String
+}
