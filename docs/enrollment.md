@@ -7,7 +7,12 @@ issued server-side by the internal CA and returned only over TLS.
 
 ## 1. Start the control server
 
+Parameters live in a YAML config file (the primary source; flags
+override only when explicitly given — see `examples/server.yaml`):
+
 ```sh
+claymod serve --config /etc/claymod/server.yaml
+# equivalent flags form:
 claymod serve \
   --bootstrap-listen :8443 \
   --server-name claymod.internal \

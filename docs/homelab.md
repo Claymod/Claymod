@@ -157,6 +157,20 @@ becomes a DNS SAN, an IP becomes an IP SAN — and is **re-issued
 automatically** whenever `--server-name` changes (the CA, and with it
 the fingerprint, stays stable).
 
+The parameters live in a YAML config file — the primary source (`claymod
+serve` reads it; every flag overrides only when explicitly given, and
+the `host token|list|revoke` subcommands accept the same `--config`):
+
+```sh
+cd ~/claymod
+cp examples/server.yaml /etc/claymod/server.yaml
+# edit /etc/claymod/server.yaml: server_name: vps, wg_endpoint: VPS_IP:51821,
+# data_dir: ~/claymod-data, agent_bin_dir: ~/claymod/agents, ...
+claymod serve --config /etc/claymod/server.yaml
+```
+
+The equivalent all-flags form (what the config file replaces):
+
 ```sh
 cd ~/claymod
 claymod serve \
@@ -246,13 +260,17 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-ExecStart=/usr/local/bin/claymod serve --data-dir /root/claymod-data --bootstrap-listen 0.0.0.0:8443 --server-name vps --wg-interface claymod0 --wg-endpoint VPS_IP:51821 --agent-network 10.42.0.0/24 --agent-bin-dir /root/claymod/agents --wg-backend wgctrl
+ExecStart=/usr/local/bin/claymod serve --config /etc/claymod/server.yaml
 Restart=always
 RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
 ```
+
+(All parameters live in `/etc/claymod/server.yaml` — §1.3; with the
+config file the unit stays readable and changes need no unit edit.
+Flags still work if you prefer them: `--data-dir … --wg-backend …`.)
 
 ```sh
 systemctl daemon-reload

@@ -168,6 +168,8 @@ EOF
 # 2. Start the control server (creates the CA + identities in ./demo).
 #    Loopback demo: the overlay network is 127.0.0.0/8 so the allocated
 #    address is 127.0.0.1 — where the agent actually listens.
+#    Prefer the config file (examples/server.yaml): flags stay available
+#    as explicit overrides, e.g. --data-dir demo --wg-backend fake.
 bin/claymod serve --data-dir demo --agent-network 127.0.0.0/8 \
   --bootstrap-listen 127.0.0.1:8443 \
   --server-name localhost --wg-backend fake
@@ -211,6 +213,32 @@ bin/claymod playbook apply demo/playbook.pkl \
 
 For a real deployment (WireGuard interface, host tokens over the
 network, revocation) see [docs/enrollment.md](docs/enrollment.md).
+
+## Control server configuration
+
+`claymod serve` is configured through a YAML file — the primary source
+of parameters, with every CLI flag available as an explicit override:
+
+```sh
+cp examples/server.yaml /etc/claymod/server.yaml   # edit to taste
+claymod serve --config /etc/claymod/server.yaml
+claymod serve --config /etc/claymod/server.yaml --wg-port 51825  # example: one-off override*
+```
+
+*flags override only when explicitly given; `host token|list|revoke`
+accept the same `--config`.
+
+```yaml
+# /etc/claymod/server.yaml (full annotated example: examples/server.yaml)
+bootstrap_listen: ":8443"     # HTTPS enrollment endpoint
+server_name: claymod          # cert CN/SAN, pinned by agents
+data_dir: /var/lib/claymod    # CA, identities, inventory
+agent_network: 10.42.0.0/24   # WireGuard overlay CIDR
+wg_endpoint: 203.0.113.7:51821
+wg_port: 51821                # never the default 51820
+wg_backend: wgctrl            # or fake for demos/CI
+manage_interface: true
+```
 
 ## Playbooks
 

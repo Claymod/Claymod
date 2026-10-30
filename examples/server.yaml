@@ -1,0 +1,56 @@
+# server.yaml — claymod control server configuration.
+#
+# This file is the PRIMARY source of `claymod serve` parameters:
+#
+#   claymod serve --config /etc/claymod/server.yaml
+#
+# Every CLI flag still exists and overrides the file ONLY when it is
+# explicitly given — flag defaults never clobber file values. (The
+# `host token|list|revoke` subcommands accept the same --config.)
+#
+# WireGuard ports here are 51821, deliberately NOT the default
+# WireGuard port 51820, so claymod never interferes with an existing
+# WireGuard setup. Everything is overridable.
+
+# HTTPS enrollment endpoint (the one agents and browsers reach).
+bootstrap_listen: ":8443"
+
+# CN/SAN on the bootstrap server certificate; agents pin it at
+# enrollment (--server-name).
+server_name: claymod
+
+# Server data directory: CA material, identities, inventory DB,
+# generated WireGuard config, agent binaries.
+data_dir: claymod-data
+
+# Agent overlay CIDR (IPAM allocations). The control server takes the
+# first address, hosts get the following ones.
+agent_network: 10.42.0.0/24
+
+# Port agents listen on over the overlay (agent.yaml listen must match).
+agent_port: 2323
+
+# debug|info|warn|error
+log_level: info
+
+# Directory of claymod-agent-<goos>-<goarch> binaries offered for
+# download at /agent/{goos}/{goarch} (empty = <data_dir>/agents).
+agent_bin_dir: ""
+
+# WireGuard overlay. A real deployment sets wg_endpoint to the public
+# IP or DNS name of the control server.
+wg_interface: claymod0
+wg_endpoint: 127.0.0.1:51821
+wg_port: 51821
+
+# wgctrl drives the real interface (needs root/CAP_NET_ADMIN); fake
+# skips interface management entirely (demos, CI).
+wg_backend: wgctrl
+
+# Let serve create/refresh the interface at startup. Set false to drive
+# wg-quick / wg syncconf yourself (the generated conf is still written
+# under <data_dir>/).
+manage_interface: true
+
+# Reserved for the future internal control API (not opened yet).
+listen: 127.0.0.1:8444
