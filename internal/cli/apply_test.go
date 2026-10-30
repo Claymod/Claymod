@@ -226,6 +226,99 @@ func TestPlaybookApplyE2E(t *testing.T) {
 	}
 }
 
+// TestPlaybookApplyStdFilesExtensionsE2E applies Content, Line and
+// Symlink through the real agent: the generated shell recipes (grep /
+// printf / readlink / ln) must actually work under the host's sh and be
+// idempotent on re-run.
+func TestPlaybookApplyStdFilesExtensionsE2E(t *testing.T) {
+	requirePklCLI(t)
+	t.Setenv("CLAYMOD_SCHEMA_DIR", testSchemaDir(t))
+
+	hostname := "web01"
+	port, caFile, certFile, keyFile := startLoopbackAgent(t, hostname)
+
+	dir := t.TempDir()
+	contentPath := filepath.Join(dir, "banner.txt")
+	linePath := filepath.Join(dir, "motd.tail")
+	linkPath := filepath.Join(dir, "current")
+	targetPath := filepath.Join(dir, "releases", "v1")
+	if err := os.MkdirAll(targetPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	playbookFile := filepath.Join(dir, "playbook.pkl")
+	if err := os.WriteFile(playbookFile, []byte(fmt.Sprintf(`amends "modulepath:/claymod/base.pkl"
+import "modulepath:/claymod/std/files.pkl"
+hosts { "%s" }
+resources {
+  new files.Content {
+    name = "banner"; content = "managed by claymod\n"; dest = "%s"
+  }
+  new files.Line {
+    name = "welcome"; path = "%s"; line = "welcome to web01"
+  }
+  new files.Symlink {
+    name = "current"; path = "%s"; target = "%s"; force = true
+  }
+}
+`, hostname, contentPath, linePath, linkPath, targetPath)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	invPath := filepath.Join(t.TempDir(), "inventory.db")
+	inv, err := inventory.Open(invPath, "127.0.0.0/8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := inv.AddHost(&inventory.Host{Hostname: hostname, WGIP: "127.0.0.1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := inv.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	applyArgs := []string{
+		"--inventory", invPath,
+		"--agent-network", "127.0.0.0/8",
+		"--agent-port", fmt.Sprintf("%d", port),
+		"--ca", caFile,
+		"--cert", certFile,
+		"--key", keyFile,
+		playbookFile,
+	}
+
+	out, err := runApplyCLI(t, applyArgs...)
+	if err != nil {
+		t.Fatalf("apply returned error: %v\noutput:\n%s", err, out)
+	}
+	if !strings.Contains(out, "3 ok, 3 changed, 0 failed") {
+		t.Errorf("first apply output missing changed summary:\n%s", out)
+	}
+	if data, err := os.ReadFile(contentPath); err != nil || string(data) != "managed by claymod\n" {
+		t.Errorf("content dest = %q, err %v", data, err)
+	}
+	if data, err := os.ReadFile(linePath); err != nil || !strings.Contains(string(data), "welcome to web01\n") {
+		t.Errorf("line dest = %q, err %v", data, err)
+	}
+	// The symlink must resolve to the target dir (both sides resolved:
+	// macOS maps /var -> /private/var in temp paths).
+	wantTarget, err := filepath.EvalSymlinks(targetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if real, err := filepath.EvalSymlinks(linkPath); err != nil || real != wantTarget {
+		t.Errorf("symlink resolves to %q (err %v), want %q", real, err, wantTarget)
+	}
+
+	// Second apply: idempotent (guards skip, content compares equal).
+	out, err = runApplyCLI(t, applyArgs...)
+	if err != nil {
+		t.Fatalf("re-apply returned error: %v\noutput:\n%s", err, out)
+	}
+	if !strings.Contains(out, "3 ok, 0 changed, 0 failed") {
+		t.Errorf("re-apply not idempotent:\n%s", out)
+	}
+}
+
 // TestPlaybookApplyCheckMode verifies --check reports would-change and
 // leaves the host untouched.
 func TestPlaybookApplyCheckMode(t *testing.T) {

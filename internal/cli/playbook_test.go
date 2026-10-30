@@ -254,6 +254,49 @@ resources {
 	}
 }
 
+// TestPlaybookValidateStdFilesExtensions evaluates all four std.files
+// extensions through the real pkl CLI, catching field-name drift
+// between the PKL classes and the Go compilers.
+func TestPlaybookValidateStdFilesExtensions(t *testing.T) {
+	requirePklCLI(t)
+	t.Setenv("CLAYMOD_SCHEMA_DIR", "")
+	t.Chdir(t.TempDir())
+
+	dir := t.TempDir()
+	playbookFile := filepath.Join(dir, "playbook.pkl")
+	if err := os.WriteFile(playbookFile, []byte(`amends "modulepath:/claymod/base.pkl"
+import "modulepath:/claymod/std/files.pkl"
+hosts { "web01" }
+resources {
+  new files.Content {
+    name = "banner"; content = "managed\n"; dest = "/etc/banner"
+  }
+  new files.Line {
+    name = "motd-line"; path = "/etc/motd.tail"; line = "welcome"
+  }
+  new files.Symlink {
+    name = "release"; path = "/srv/current"; target = "/srv/v1"; force = true
+  }
+  new files.Fetch {
+    name = "ca"; url = "https://example.internal/ca.pem"; dest = "/etc/ca.pem"
+  }
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := new(bytes.Buffer)
+	cmd := newRootCmd()
+	cmd.SetOut(out)
+	cmd.SetErr(out)
+	cmd.SetArgs([]string{"playbook", "validate", playbookFile})
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("validate returned error: %v (output: %s)", err, out.String())
+	}
+	if !strings.Contains(out.String(), "playbook OK: 4 resource(s)") {
+		t.Errorf("output = %q", out.String())
+	}
+}
+
 func TestPlaybookMissingFile(t *testing.T) {
 	out := new(bytes.Buffer)
 	cmd := newRootCmd()
