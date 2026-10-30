@@ -443,13 +443,15 @@ func TestCompileLinePresentGolden(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Compile returned error: %v", err)
 	}
-	// encoding/json HTML-escapes > and < on the wire (\u003e): the
-	// agent decodes it identically.
-	want := `[{"op_type":"command","command":{` +
-		`"shell":"printf '%s\\n' 'welcome to web01' \u003e\u003e '/etc/motd.tail'",` +
-		`"unless_if":"grep -qxF -- 'welcome to web01' '/etc/motd.tail'"}}]`
-	if got := mustJSON(t, ops); got != want {
-		t.Errorf("ops mismatch:\n got: %s\nwant: %s", got, want)
+	// The append first tops up a missing trailing newline (a file ending
+	// in a non-newline char must not glue onto the managed line).
+	want := []proto.Op{{OpType: proto.OpTypeCommand, Command: &proto.CommandOp{
+		UnlessIf: "grep -qxF -- 'welcome to web01' '/etc/motd.tail'",
+		Shell: `[ -z "$(tail -c 1 '/etc/motd.tail' 2>/dev/null)" ] || printf '\n' >> '/etc/motd.tail'
+printf '%s\n' 'welcome to web01' >> '/etc/motd.tail'`,
+	}}}
+	if got := mustJSON(t, ops); got != mustJSON(t, want) {
+		t.Errorf("ops mismatch:\n got: %s\nwant: %s", got, mustJSON(t, want))
 	}
 }
 
@@ -545,9 +547,10 @@ func TestCompileSymlinkGolden(t *testing.T) {
 	if cmd.UnlessIf != `[ "$(readlink '/srv/app/current')" = '/srv/app/releases/v1' ]` {
 		t.Errorf("no-force unlessIf = %q", cmd.UnlessIf)
 	}
-	// Without force the recipe first refuses to clobber a non-symlink,
-	// then links on the next line.
-	wantShell := `if [ -e '/srv/app/current' ] && ! [ -L '/srv/app/current' ]; then echo "claymod: '/srv/app/current' exists and is not a symlink (set force = true to replace)" >&2; exit 1; fi
+	// Without force the recipe first refuses to clobber a non-symlink
+	// (the path is a printf argument — safe against `"` and `$(...)` in
+	// the name), then links on the next line.
+	wantShell := `if [ -e '/srv/app/current' ] && ! [ -L '/srv/app/current' ]; then printf '%s exists and is not a symlink (set force = true to replace)\n' '/srv/app/current' >&2; exit 1; fi
 rm -f '/srv/app/current' && ln -s '/srv/app/releases/v1' '/srv/app/current'`
 	if cmd.Shell != wantShell {
 		t.Errorf("no-force shell = %q, want %q", cmd.Shell, wantShell)

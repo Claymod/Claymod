@@ -240,9 +240,15 @@ func TestPlaybookApplyStdFilesExtensionsE2E(t *testing.T) {
 	dir := t.TempDir()
 	contentPath := filepath.Join(dir, "banner.txt")
 	linePath := filepath.Join(dir, "motd.tail")
+	joinPath := filepath.Join(dir, "no-newline.conf")
 	linkPath := filepath.Join(dir, "current")
 	targetPath := filepath.Join(dir, "releases", "v1")
 	if err := os.MkdirAll(targetPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A pre-existing config whose last line lacks a trailing newline:
+	// the managed line must land on its own line, not glue onto "abc".
+	if err := os.WriteFile(joinPath, []byte("abc"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	playbookFile := filepath.Join(dir, "playbook.pkl")
@@ -256,11 +262,14 @@ resources {
   new files.Line {
     name = "welcome"; path = "%s"; line = "welcome to web01"
   }
+  new files.Line {
+    name = "joined"; path = "%s"; line = "joined-line"
+  }
   new files.Symlink {
     name = "current"; path = "%s"; target = "%s"; force = true
   }
 }
-`, hostname, contentPath, linePath, linkPath, targetPath)), 0o644); err != nil {
+`, hostname, contentPath, linePath, joinPath, linkPath, targetPath)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -290,7 +299,7 @@ resources {
 	if err != nil {
 		t.Fatalf("apply returned error: %v\noutput:\n%s", err, out)
 	}
-	if !strings.Contains(out, "3 ok, 3 changed, 0 failed") {
+	if !strings.Contains(out, "4 ok, 4 changed, 0 failed") {
 		t.Errorf("first apply output missing changed summary:\n%s", out)
 	}
 	if data, err := os.ReadFile(contentPath); err != nil || string(data) != "managed by claymod\n" {
@@ -298,6 +307,10 @@ resources {
 	}
 	if data, err := os.ReadFile(linePath); err != nil || !strings.Contains(string(data), "welcome to web01\n") {
 		t.Errorf("line dest = %q, err %v", data, err)
+	}
+	// The unfinished last line got its newline, the managed line is whole.
+	if data, err := os.ReadFile(joinPath); err != nil || string(data) != "abc\njoined-line\n" {
+		t.Errorf("joined line dest = %q, err %v (want abc\\njoined-line\\n)", data, err)
 	}
 	// The symlink must resolve to the target dir (both sides resolved:
 	// macOS maps /var -> /private/var in temp paths).
@@ -314,7 +327,7 @@ resources {
 	if err != nil {
 		t.Fatalf("re-apply returned error: %v\noutput:\n%s", err, out)
 	}
-	if !strings.Contains(out, "3 ok, 0 changed, 0 failed") {
+	if !strings.Contains(out, "4 ok, 0 changed, 0 failed") {
 		t.Errorf("re-apply not idempotent:\n%s", out)
 	}
 }

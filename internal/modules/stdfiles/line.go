@@ -62,8 +62,12 @@ func compileLine(res playbook.Resource, ctx playbook.RenderContext) ([]proto.Op,
 	case "present":
 		// Skip when the exact line is already there.
 		op.UnlessIf = fmt.Sprintf("grep -qxF -- %s %s", qLine, qPath)
-		// Appends (creating the file if missing); a directory fails here.
-		op.Shell = fmt.Sprintf("printf '%%s\\n' %s >> %s", qLine, qPath)
+		// First give a non-empty file a trailing newline if it lacks one
+		// (tail -c 1 of a file ending in \n command-substitutes to empty;
+		// 2>/dev/null keeps a missing file quiet), then append — otherwise
+		// the managed line glues onto the last line.
+		op.Shell = fmt.Sprintf(`[ -z "$(tail -c 1 %s 2>/dev/null)" ] || printf '\n' >> %s
+printf '%%s\n' %s >> %s`, qPath, qPath, qLine, qPath)
 	case "absent":
 		// Skip when the line is gone (also skips a missing file: grep
 		// exits 2 on a missing path).
@@ -104,7 +108,10 @@ func compileSymlink(res playbook.Resource, ctx playbook.RenderContext) ([]proto.
 	if r.Force {
 		op.Shell = link
 	} else {
-		op.Shell = fmt.Sprintf(`if [ -e %s ] && ! [ -L %s ]; then echo "claymod: %s exists and is not a symlink (set force = true to replace)" >&2; exit 1; fi
+		// The path is a printf ARGUMENT (single-quoted), never part of a
+		// double-quoted message: a path with `"` or `$(...)` must not be
+		// able to garble or execute inside the refusal branch.
+		op.Shell = fmt.Sprintf(`if [ -e %s ] && ! [ -L %s ]; then printf '%%s exists and is not a symlink (set force = true to replace)\n' %s >&2; exit 1; fi
 %s`, qPath, qPath, qPath, link)
 	}
 	return []proto.Op{{OpType: proto.OpTypeCommand, Command: op}}, nil
