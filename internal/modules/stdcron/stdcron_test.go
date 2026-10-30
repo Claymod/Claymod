@@ -141,6 +141,60 @@ func TestCronEntryAbsentRemovesOnlyMarkedLines(t *testing.T) {
 	}
 }
 
+// TestCronEntryMarkerIsEndAnchored pins the prefix-collision fix: a
+// resource named "backup" must not touch "backup-daily"'s entry.
+func TestCronEntryMarkerIsEndAnchored(t *testing.T) {
+	store := fakeCrontab(t)
+	if err := os.WriteFile(store, []byte(
+		"0 3 * * * /usr/local/bin/daily.sh # claymod:backup-daily\n"+
+			"0 2 * * * /usr/local/bin/hourly.sh # claymod:backup\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	op := compile(t, "backup", "0 2 * * *", "/usr/local/bin/hourly.sh", "absent")
+	ran, out, code := runOp(t, op)
+	if !ran || code != 0 {
+		t.Fatalf("absent: ran=%v code=%d output=%s", ran, code, out)
+	}
+	got := readStore(t, store)
+	if !strings.Contains(got, "# claymod:backup-daily") {
+		t.Errorf("prefix collision: backup-daily's entry was removed:\n%s", got)
+	}
+	if strings.Contains(got, "# claymod:backup\n") {
+		t.Errorf("own entry not removed:\n%s", got)
+	}
+}
+
+// TestCronEntryNameWithQuote pins the quoting fix: a name containing a
+// single quote must not break the recipes or execute anything.
+func TestCronEntryNameWithQuote(t *testing.T) {
+	store := fakeCrontab(t)
+
+	op := compile(t, "nightly's", "0 3 * * *", "/usr/local/bin/backup.sh", "present")
+	ran, out, code := runOp(t, op)
+	if !ran || code != 0 {
+		t.Fatalf("install: ran=%v code=%d output=%s", ran, code, out)
+	}
+	if got := readStore(t, store); got != "0 3 * * * /usr/local/bin/backup.sh # claymod:nightly's\n" {
+		t.Fatalf("store = %q", got)
+	}
+
+	// The guard matches, so a second run is skipped (the quote must not
+	// break the guard either).
+	if ran, out, _ := runOp(t, op); ran {
+		t.Fatalf("second run not skipped: %s", out)
+	}
+
+	// Absent with the same quoted name removes exactly the entry.
+	opAbsent := compile(t, "nightly's", "0 3 * * *", "/usr/local/bin/backup.sh", "absent")
+	if ran, out, code := runOp(t, opAbsent); !ran || code != 0 {
+		t.Fatalf("remove: ran=%v code=%d output=%s", ran, code, out)
+	}
+	if got := readStore(t, store); got != "" {
+		t.Fatalf("store after remove = %q, want empty", got)
+	}
+}
+
 func TestCronEntryQuotesCommand(t *testing.T) {
 	store := fakeCrontab(t)
 	op := compile(t, "tricky", "0 3 * * *", `/usr/bin/run --msg "it's $(date)" ; echo done`, "present")

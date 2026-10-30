@@ -9,6 +9,7 @@ package stdcron
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/claymod/claymod/internal/modules"
@@ -70,12 +71,18 @@ func compileEntry(res playbook.Resource, ctx playbook.RenderContext) ([]proto.Op
 	qName, qSched, qCmd := shell.Quote(r.Name), shell.Quote(r.Schedule), shell.Quote(r.Command)
 	entry := fmt.Sprintf("%s %s # claymod:%s", r.Schedule, r.Command, r.Name)
 	qEntry := shell.Quote(entry)
+	// The marker regex is end-anchored ($): a resource named "backup"
+	// must never match another resource's "# claymod:backup-daily" line.
+	// QuoteMeta keeps regex metacharacters in the name literal; the
+	// pattern travels as a single-quoted shell word, so any name is safe.
+	marker := "# claymod:" + r.Name
+	qMarker := shell.Quote(regexp.QuoteMeta(marker) + "$")
 	// Read the current crontab (missing crontab = empty), dropping every
 	// line carrying this resource's marker.
 	rewrite := fmt.Sprintf(`tmp=$(mktemp) || exit 1
 trap 'rm -f "$tmp"' EXIT
-crontab -l 2>/dev/null | grep -vF -- '# claymod:%s' > "$tmp" || true
-`, r.Name)
+crontab -l 2>/dev/null | grep -vE -- %s > "$tmp" || true
+`, qMarker)
 
 	op := &proto.CommandOp{}
 	switch ensure {
@@ -86,7 +93,7 @@ crontab -l 2>/dev/null | grep -vF -- '# claymod:%s' > "$tmp" || true
 `, qSched, qCmd, qName)
 	case "absent":
 		// Skip when no marked line remains.
-		op.OnlyIf = fmt.Sprintf("crontab -l 2>/dev/null | grep -qF -- '# claymod:%s'", r.Name)
+		op.OnlyIf = fmt.Sprintf("crontab -l 2>/dev/null | grep -qE -- %s", qMarker)
 		op.Shell = rewrite + `crontab "$tmp"
 `
 	default:

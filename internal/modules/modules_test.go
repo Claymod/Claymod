@@ -711,9 +711,10 @@ func TestCompileCronEntryGolden(t *testing.T) {
 		t.Errorf("unlessIf = %q, want %q", cmd.UnlessIf, wantUnless)
 	}
 	// The recipe reads the crontab, drops this resource's marked lines
-	// and re-installs with the entry appended.
+	// (end-anchored, so "backup" never matches "backup-daily") and
+	// re-installs with the entry appended.
 	for _, want := range []string{
-		"crontab -l 2>/dev/null | grep -vF -- '# claymod:nightly-backup'",
+		`crontab -l 2>/dev/null | grep -vE -- '# claymod:nightly-backup$'`,
 		`printf '%s %s # claymod:%s\n' '0 3 * * *' '/usr/local/bin/backup.sh' 'nightly-backup'`,
 		"| crontab -",
 	} {
@@ -735,11 +736,11 @@ func TestCompileCronEntryGolden(t *testing.T) {
 		t.Fatalf("Compile(absent) returned error: %v", err)
 	}
 	cmd = ops[0].Command
-	if cmd.OnlyIf != `crontab -l 2>/dev/null | grep -qF -- '# claymod:stale-job'` {
+	if cmd.OnlyIf != `crontab -l 2>/dev/null | grep -qE -- '# claymod:stale-job$'` {
 		t.Errorf("onlyIf = %q", cmd.OnlyIf)
 	}
 	for _, want := range []string{
-		"grep -vF -- '# claymod:stale-job'",
+		`grep -vE -- '# claymod:stale-job$'`,
 		`crontab "$tmp"`,
 	} {
 		if !strings.Contains(cmd.Shell, want) {
