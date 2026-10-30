@@ -90,9 +90,9 @@ PKL):
 
 ```sh
 # from your workstation
-ssh root@VPS_IP 'mkdir -p /root/claymod/pkl'
+ssh root@VPS_IP 'mkdir -p /root/claymod/pkl /root/claymod/scripts'
 rsync -av pkl/ root@VPS_IP:/root/claymod/pkl/
-rsync -av scripts/bootstrap-pkl.sh root@VPS_IP:/root/claymod/
+rsync -av scripts/bootstrap-pkl.sh root@VPS_IP:/root/claymod/scripts/
 
 # on the VPS
 /root/claymod/scripts/bootstrap-pkl.sh    # installs to /usr/local/bin
