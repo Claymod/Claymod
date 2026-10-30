@@ -216,6 +216,15 @@ sudo wg-quick up /path/to/claymod-data/claymod0.conf   # first time
 sudo wg syncconf claymod0 <(wg-quick strip /path/to/claymod-data/claymod0.conf)
 ```
 
+To have the interface come up at boot, link the generated file where
+`wg-quick@` expects it and enable the unit — it always boots current,
+because `serve` keeps the file up to date:
+
+```sh
+sudo ln -s /path/to/claymod-data/claymod0.conf /etc/wireguard/claymod0.conf
+sudo systemctl enable wg-quick@claymod0
+```
+
 On the host, render the equivalent wg-quick config from
 `wg-setup.json`, or run `claymod-agent wg-setup` — it only needs
 `CAP_NET_ADMIN` for its one root step.
