@@ -27,6 +27,17 @@ import (
 // userCacheDir is swappable in tests.
 var userCacheDir = os.UserCacheDir
 
+// CacheRoot returns the root of claymod's on-disk caches (the
+// materialized std, the library clones): CLAYMOD_CACHE_DIR when set,
+// otherwise the platform user cache directory. Pointing it at a
+// removable/vendored directory is the air-gapped flow for libraries.
+func CacheRoot() (string, error) {
+	if v := os.Getenv("CLAYMOD_CACHE_DIR"); v != "" {
+		return filepath.Abs(v)
+	}
+	return userCacheDir()
+}
+
 // readyMarker names the file written last during materialization; its
 // presence (with the expected content) marks a complete schema dir.
 const readyMarker = ".claymod-schema-ok"
@@ -59,9 +70,9 @@ func materializeStd() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	base, err := userCacheDir()
+	base, err := CacheRoot()
 	if err != nil {
-		return "", fmt.Errorf("resolve user cache dir: %w (set CLAYMOD_SCHEMA_DIR to an on-disk copy of the pkl/ schema)", err)
+		return "", fmt.Errorf("resolve cache dir: %w (set CLAYMOD_SCHEMA_DIR to an on-disk copy of the pkl/ schema)", err)
 	}
 	root := filepath.Join(base, "claymod", "schema", hash)
 	if stdReady(root, hash) {
@@ -167,12 +178,11 @@ func ExtraFromEnv() []string {
 }
 
 // ModulePath assembles the ordered directories passed to `pkl eval
-// --module-path`: the std root first, then extraDirs (the --module-path
-// flag, later also project schemaPaths and library caches). Duplicates
-// and empty entries are dropped. playbookFile is the playbook being
-// evaluated; project-relative lookups (Part: external libraries) resolve
-// upward from its directory.
-func ModulePath(playbookFile string, extraDirs []string) ([]string, error) {
+// --module-path`: the std root first, then extraDirs (--module-path
+// flags, CLAYMOD_MODULE_PATH; project schemaPaths and library caches
+// are appended by the libs package, which owns project discovery).
+// Duplicates and empty entries are dropped.
+func ModulePath(extraDirs []string) ([]string, error) {
 	std, err := StdDir()
 	if err != nil {
 		return nil, err

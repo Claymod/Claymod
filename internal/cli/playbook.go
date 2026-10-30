@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/claymod/claymod/internal/libs"
 	"github.com/claymod/claymod/internal/pkl"
 	"github.com/claymod/claymod/internal/playbook"
 	"github.com/claymod/claymod/internal/schema"
@@ -22,10 +23,12 @@ func addModulePathFlag(cmd *cobra.Command, p *[]string) {
 		"extra directory searched for modulepath: URIs (repeatable; CLAYMOD_MODULE_PATH adds colon-separated ones)")
 }
 
-// resolveModulePath builds the module path for playbookFile from the
-// std (embedded or CLAYMOD_SCHEMA_DIR), the environment and flag dirs.
+// resolveModulePath builds the module path for playbookFile: the std
+// (embedded or CLAYMOD_SCHEMA_DIR), the environment and flag dirs, and
+// — when a claymod.project.yaml exists above the playbook — the
+// project's schemaPaths and synced git libraries.
 func resolveModulePath(playbookFile string, flagDirs []string) ([]string, error) {
-	return schema.ModulePath(playbookFile, append(schema.ExtraFromEnv(), flagDirs...))
+	return libs.ModulePathFor(playbookFile, append(schema.ExtraFromEnv(), flagDirs...), false)
 }
 
 func newPlaybookCmd() *cobra.Command {

@@ -35,6 +35,7 @@ them to enrolled hosts over a WireGuard tunnel.`,
 	root.AddCommand(agentcli.NewEnrollCmd())
 	root.AddCommand(newHostCmd())
 	root.AddCommand(newExecCmd())
+	root.AddCommand(newLibCmd())
 	root.AddCommand(agentcli.NewWGSetupCmd())
 	return root
 }
