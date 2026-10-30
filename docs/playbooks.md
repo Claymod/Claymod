@@ -101,6 +101,36 @@ skipped reports `changed=false` — re-running a playbook is safe.
 
 `enabled` omitted/null leaves boot enablement unchanged.
 
+### std.sysctl
+
+| Resource | Purpose | Key fields |
+|---|---|---|
+| `sysctl.Sysctl` | set a runtime kernel sysctl | `key`, `value` |
+
+Idempotent: skipped while `sysctl -n <key>` already reports `value`.
+The recipe writes `sysctl 'key'='value'` — the form procps, busybox and
+BSD sysctl all parse as a write (verified on macOS, alpine and debian).
+**Runtime-only by design**: persistence across reboots is an explicit
+`files.Content` write to `/etc/sysctl.d/<name>.conf`, which you compose
+with `dependsOn`.
+
+### std.cron
+
+| Resource | Purpose | Key fields |
+|---|---|---|
+| `cron.Entry` | manage one crontab entry | `schedule`, `command`, `ensure` (`present`/`absent`) |
+
+Installs into the **invoking user's** crontab (the agent's user,
+typically root) via `crontab(1)` — deliberately not `/etc/cron.d`,
+whose syntax and availability vary across distros. Each entry is
+tagged with a trailing `# claymod:<name>` marker; the guard matches the
+exact marked line, so updates replace and `ensure = "absent"` removes
+exactly that resource's entries (foreign crontab lines are untouched).
+`schedule` is a crontab(5) line (five fields or an `@daily`-style
+shortcut); `schedule`, `command` and the resource name must be single
+lines without `#` in the name. A missing crontab binary fails the op
+with a clear stderr instead of silently succeeding.
+
 ## Templates
 
 `files.Template` and `commands.Script` content render server-side with

@@ -21,7 +21,8 @@ TLS. Small dependency footprint, one static binary.
 ```
 
 - **Playbooks in PKL** (`pkl/claymod/` schema): declarative resources
-  (`std.files`, `std.commands`, `std.service`) with per-host vars and
+  (`std.files`, `std.commands`, `std.service`, `std.sysctl`, `std.cron`)
+  with per-host vars and
   dependencies; compiled server-side to primitive ops — agents never see
   PKL.
 - **Enrollment**: one-time tokens over an HTTPS bootstrap endpoint; the
