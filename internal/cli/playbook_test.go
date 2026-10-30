@@ -297,6 +297,47 @@ resources {
 	}
 }
 
+// TestPlaybookValidateStdSysctlCron evaluates std.sysctl and std.cron
+// through the real pkl CLI, catching field-name drift between the PKL
+// classes and the Go compilers.
+func TestPlaybookValidateStdSysctlCron(t *testing.T) {
+	requirePklCLI(t)
+	t.Setenv("CLAYMOD_SCHEMA_DIR", "")
+	t.Chdir(t.TempDir())
+
+	dir := t.TempDir()
+	playbookFile := filepath.Join(dir, "playbook.pkl")
+	if err := os.WriteFile(playbookFile, []byte(`amends "modulepath:/claymod/base.pkl"
+import "modulepath:/claymod/std/sysctl.pkl"
+import "modulepath:/claymod/std/cron.pkl"
+hosts { "web01" }
+resources {
+  new sysctl.Sysctl {
+    name = "ip-forward"; key = "net.ipv4.ip_forward"; value = "1"
+  }
+  new cron.Entry {
+    name = "nightly"; schedule = "0 3 * * *"; command = "/usr/local/bin/backup.sh"
+  }
+  new cron.Entry {
+    name = "stale"; schedule = "@daily"; command = "/usr/local/bin/old.sh"; ensure = "absent"
+  }
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := new(bytes.Buffer)
+	cmd := newRootCmd()
+	cmd.SetOut(out)
+	cmd.SetErr(out)
+	cmd.SetArgs([]string{"playbook", "validate", playbookFile})
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("validate returned error: %v (output: %s)", err, out.String())
+	}
+	if !strings.Contains(out.String(), "playbook OK: 3 resource(s)") {
+		t.Errorf("output = %q", out.String())
+	}
+}
+
 func TestPlaybookMissingFile(t *testing.T) {
 	out := new(bytes.Buffer)
 	cmd := newRootCmd()

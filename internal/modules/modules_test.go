@@ -373,6 +373,46 @@ func TestCompileErrors(t *testing.T) {
 			doc:  `{"type": "std.files.Fetch", "name": "x", "url": "https://x/", "dest": "/a", "sha256": "` + strings.Repeat("z", 64) + `"}`,
 			want: "must be hex",
 		},
+		{
+			name: "sysctl missing key",
+			doc:  `{"type": "std.sysctl.Sysctl", "name": "x", "key": "", "value": "1"}`,
+			want: "key is required",
+		},
+		{
+			name: "sysctl key with whitespace",
+			doc:  `{"type": "std.sysctl.Sysctl", "name": "x", "key": "net ipv4", "value": "1"}`,
+			want: "whitespace",
+		},
+		{
+			name: "sysctl missing value",
+			doc:  `{"type": "std.sysctl.Sysctl", "name": "x", "key": "net.ipv4.ip_forward", "value": ""}`,
+			want: "value is required",
+		},
+		{
+			name: "sysctl value with newline",
+			doc:  `{"type": "std.sysctl.Sysctl", "name": "x", "key": "k", "value": "a\nb"}`,
+			want: "single line",
+		},
+		{
+			name: "cron schedule with newline",
+			doc:  `{"type": "std.cron.Entry", "name": "x", "schedule": "0 3\n* * *", "command": "true"}`,
+			want: "single line",
+		},
+		{
+			name: "cron command with newline",
+			doc:  `{"type": "std.cron.Entry", "name": "x", "schedule": "0 3 * * *", "command": "a\nb"}`,
+			want: "single line",
+		},
+		{
+			name: "cron name with marker hash",
+			doc:  `{"type": "std.cron.Entry", "name": "weird#name", "schedule": "0 3 * * *", "command": "true"}`,
+			want: "newlines or #",
+		},
+		{
+			name: "cron bad ensure",
+			doc:  `{"type": "std.cron.Entry", "name": "x", "schedule": "0 3 * * *", "command": "true", "ensure": "wonky"}`,
+			want: "invalid ensure",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -624,6 +664,90 @@ func TestCompileFetchErrors(t *testing.T) {
 				t.Errorf("error = %q, want substring %q", err.Error(), tc.want)
 			}
 		})
+	}
+}
+
+func TestCompileSysctlGolden(t *testing.T) {
+	ctx := playbook.RenderContext{Vars: map[string]string{}}
+	res := resource(t, `{
+		"type": "std.sysctl.Sysctl",
+		"name": "ip-forward",
+		"dependsOn": [],
+		"key": "net.ipv4.ip_forward",
+		"value": "1"
+	}`)
+
+	ops, err := modules.Compile(res, ctx)
+	if err != nil {
+		t.Fatalf("Compile returned error: %v", err)
+	}
+	want := []proto.Op{{OpType: proto.OpTypeCommand, Command: &proto.CommandOp{
+		UnlessIf: `[ "$(sysctl -n 'net.ipv4.ip_forward' 2>/dev/null)" = '1' ]`,
+		Shell:    `sysctl 'net.ipv4.ip_forward'='1'`,
+	}}}
+	if got := mustJSON(t, ops); got != mustJSON(t, want) {
+		t.Errorf("ops mismatch:\n got: %s\nwant: %s", got, mustJSON(t, want))
+	}
+}
+
+func TestCompileCronEntryGolden(t *testing.T) {
+	ctx := playbook.RenderContext{Vars: map[string]string{}}
+	res := resource(t, `{
+		"type": "std.cron.Entry",
+		"name": "nightly-backup",
+		"dependsOn": [],
+		"schedule": "0 3 * * *",
+		"command": "/usr/local/bin/backup.sh",
+		"ensure": "present"
+	}`)
+
+	ops, err := modules.Compile(res, ctx)
+	if err != nil {
+		t.Fatalf("Compile returned error: %v", err)
+	}
+	cmd := ops[0].Command
+	wantUnless := `crontab -l 2>/dev/null | grep -qFx -- '0 3 * * * /usr/local/bin/backup.sh # claymod:nightly-backup'`
+	if cmd.UnlessIf != wantUnless {
+		t.Errorf("unlessIf = %q, want %q", cmd.UnlessIf, wantUnless)
+	}
+	// The recipe reads the crontab, drops this resource's marked lines
+	// and re-installs with the entry appended.
+	for _, want := range []string{
+		"crontab -l 2>/dev/null | grep -vF -- '# claymod:nightly-backup'",
+		`printf '%s %s # claymod:%s\n' '0 3 * * *' '/usr/local/bin/backup.sh' 'nightly-backup'`,
+		"| crontab -",
+	} {
+		if !strings.Contains(cmd.Shell, want) {
+			t.Errorf("shell = %q, want it to contain %q", cmd.Shell, want)
+		}
+	}
+
+	absent := resource(t, `{
+		"type": "std.cron.Entry",
+		"name": "stale-job",
+		"dependsOn": [],
+		"schedule": "@daily",
+		"command": "/usr/local/bin/old.sh",
+		"ensure": "absent"
+	}`)
+	ops, err = modules.Compile(absent, ctx)
+	if err != nil {
+		t.Fatalf("Compile(absent) returned error: %v", err)
+	}
+	cmd = ops[0].Command
+	if cmd.OnlyIf != `crontab -l 2>/dev/null | grep -qF -- '# claymod:stale-job'` {
+		t.Errorf("onlyIf = %q", cmd.OnlyIf)
+	}
+	for _, want := range []string{
+		"grep -vF -- '# claymod:stale-job'",
+		`crontab "$tmp"`,
+	} {
+		if !strings.Contains(cmd.Shell, want) {
+			t.Errorf("absent shell = %q, want it to contain %q", cmd.Shell, want)
+		}
+	}
+	if strings.Contains(cmd.Shell, "printf") {
+		t.Errorf("absent shell must not re-install the entry: %q", cmd.Shell)
 	}
 }
 

@@ -23,17 +23,3 @@ func TestFetchContentSizeCap(t *testing.T) {
 		t.Errorf("error = %q, want a size-limit message", err.Error())
 	}
 }
-
-func TestShellQuote(t *testing.T) {
-	cases := map[string]string{
-		"plain":          `'plain'`,
-		"it's":           `'it'\''s'`,
-		`say "hi"; exit`: `'say "hi"; exit'`,
-		"":               `''`,
-	}
-	for in, want := range cases {
-		if got := shellQuote(in); got != want {
-			t.Errorf("shellQuote(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
