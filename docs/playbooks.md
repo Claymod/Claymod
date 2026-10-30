@@ -261,6 +261,8 @@ Semantics:
   each other (`modulepath:/<other>/…`) like any playbook. The git CLI
   is needed on the control server to sync (the same machine that
   already needs the pkl CLI).
+- Which libraries exist and who maintains them:
+  [libraries.md](libraries.md) — the curated index with its trust tiers.
 
 ## Examples
 

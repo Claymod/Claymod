@@ -274,7 +274,9 @@ work from any working directory (`CLAYMOD_SCHEMA_DIR` pins an on-disk
 copy; `--module-path`/`CLAYMOD_MODULE_PATH` add extra lookup dirs).
 Shared PKL libraries come from git repos pinned in
 `claymod.project.yaml` (managed with `claymod lib list|sync`; see
-[docs/playbooks.md](docs/playbooks.md#libraries)).
+[docs/playbooks.md](docs/playbooks.md#libraries)). Which libraries
+exist, who maintains them and the trust tiers:
+[docs/libraries.md](docs/libraries.md).
 
 Start a new playbook from a scaffold with `claymod playbook init <dir>`.
 
