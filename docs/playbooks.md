@@ -57,10 +57,27 @@ Rules learned the hard way (PKL specifics):
 | `files.Copy` | copy a static file | `source`, `dest`, `mode`, `owner`, `group`, `backup` |
 | `files.Template` | render a Go template server-side | `source`, `dest`, `mode`, `vars`, `backup` |
 | `files.Directory` | ensure a directory (or absence) | `path`, `mode`, `ensure` (`directory`/`absent`) |
+| `files.Content` | write literal inline text | `content`, `dest`, `mode`, `owner`, `group`, `backup` |
+| `files.Line` | ensure one exact line is present/absent | `path`, `line`, `ensure` (`present`/`absent`) |
+| `files.Symlink` | ensure a symlink points at `target` | `path`, `target`, `force` |
+| `files.Fetch` | download on the control server, ship like Copy | `url`, `dest`, `sha256?`, `mode`, `owner`, `group`, `backup` |
 
 Paths: `source` is relative to the playbook's directory; `dest`/`path`
 must be absolute on the host. `backup = true` keeps a `.bak` copy of
 overwritten files.
+
+Text-only file content: file bodies travel the wire as JSON strings, so
+`Copy`, `Content`, `Template` and `Fetch` are for text files — binaries
+would be corrupted by UTF-8 coercion.
+
+`files.Line` matches the **full line** (`grep -x`): `"present"` appends
+when missing (creating the file if needed), `"absent"` rewrites the file
+without it — in place via `cat >`, so mode and owner survive. The line
+must not contain a newline. `files.Symlink` relinks a wrong-target
+symlink automatically; a non-symlink occupying `path` fails the apply
+unless `force = true`. `files.Fetch` downloads at **compile time** on
+the control server (60 s timeout, 64 MiB cap, `sha256` verified
+server-side) — agents see only ordinary file ops.
 
 ### std.commands
 
