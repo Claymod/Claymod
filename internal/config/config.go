@@ -11,12 +11,18 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Server is the control-server configuration (server.yaml).
+// Server is the control-server configuration (server.yaml). It is the
+// primary source for `claymod serve`; CLI flags only override values
+// they are explicitly given.
 type Server struct {
-	// Listen is the address of the internal control API (CLI-facing).
+	// Listen is the address of the internal control API (CLI-facing;
+	// reserved — serve does not open it yet).
 	Listen string `yaml:"listen"`
 	// BootstrapListen is the HTTPS enrollment endpoint.
 	BootstrapListen string `yaml:"bootstrap_listen"`
+	// ServerName is the CN/SAN on the bootstrap server certificate
+	// (agents pin it as --server-name at enrollment).
+	ServerName string `yaml:"server_name"`
 	// AgentPort is the port agents listen on over the WireGuard overlay.
 	AgentPort int `yaml:"agent_port"`
 	// AgentNetwork is the WireGuard overlay CIDR (e.g. 10.42.0.0/24).
@@ -25,6 +31,22 @@ type Server struct {
 	DataDir string `yaml:"data_dir"`
 	// LogLevel is debug|info|warn|error.
 	LogLevel string `yaml:"log_level"`
+	// AgentBinDir serves agent binaries at /agent/{goos}/{goarch}
+	// (empty = <data_dir>/agents).
+	AgentBinDir string `yaml:"agent_bin_dir"`
+	// WGInterface is the WireGuard interface peers are managed on.
+	WGInterface string `yaml:"wg_interface"`
+	// WGEndpoint is the WireGuard endpoint agents connect to
+	// (host:port; a real deployment sets the public IP here).
+	WGEndpoint string `yaml:"wg_endpoint"`
+	// WGPort is the WireGuard UDP listen port (never the default
+	// WireGuard port: claymod stays out of the user's own tunnels).
+	WGPort int `yaml:"wg_port"`
+	// WGBackend is wgctrl (real, needs root) or fake (testing).
+	WGBackend string `yaml:"wg_backend"`
+	// ManageInterface creates/refreshes the WireGuard interface at
+	// startup (set false to drive wg-quick yourself).
+	ManageInterface bool `yaml:"manage_interface"`
 }
 
 // Agent is the host-daemon configuration (/etc/claymod/agent.yaml).
@@ -50,10 +72,17 @@ func DefaultServer() Server {
 	return Server{
 		Listen:          "127.0.0.1:8444",
 		BootstrapListen: ":8443",
+		ServerName:      "claymod",
 		AgentPort:       2323,
 		AgentNetwork:    "10.42.0.0/24",
 		DataDir:         "claymod-data",
 		LogLevel:        "info",
+		AgentBinDir:     "",
+		WGInterface:     "claymod0",
+		WGEndpoint:      "127.0.0.1:51821",
+		WGPort:          51821,
+		WGBackend:       "wgctrl",
+		ManageInterface: true,
 	}
 }
 
@@ -115,6 +144,23 @@ func (s *Server) Validate() error {
 	}
 	if s.DataDir == "" {
 		return fmt.Errorf("data_dir must be set")
+	}
+	if s.ServerName == "" {
+		return fmt.Errorf("server_name must be set")
+	}
+	if s.WGInterface == "" {
+		return fmt.Errorf("wg_interface must be set")
+	}
+	if s.WGEndpoint == "" {
+		return fmt.Errorf("wg_endpoint must be set")
+	}
+	if s.WGPort <= 0 || s.WGPort > 65535 {
+		return fmt.Errorf("wg_port must be in 1..65535, got %d", s.WGPort)
+	}
+	switch s.WGBackend {
+	case "", "wgctrl", "fake":
+	default:
+		return fmt.Errorf("wg_backend must be wgctrl or fake, got %q", s.WGBackend)
 	}
 	if err := validateLogLevel(s.LogLevel); err != nil {
 		return err

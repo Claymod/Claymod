@@ -30,84 +30,89 @@ import (
 )
 
 func newServeCmd() *cobra.Command {
-	var (
-		configPath      string
-		dataDir         string
-		agentNetwork    string
-		bootstrapAddr   string
-		wgInterface     string
-		wgEndpoint      string
-		wgListenPort    int
-		agentBinDir     string
-		manageInterface bool
-		wgBackendMode   string
-		serverName      string
-	)
+	var configPath string
 	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Run the claymod control server",
 		Long: `Run the claymod control server: manages hosts, issues
 enrollment tokens over an HTTPS bootstrap endpoint and drives agents
-over the WireGuard overlay.`,
+over the WireGuard overlay.
+
+The YAML config file (--config server.yaml) is the primary source of
+parameters; every CLI flag overrides only when it is explicitly given.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runServe(cmd.Context(), cmd, serveOptions{
-				configPath:      configPath,
-				dataDir:         dataDir,
-				agentNetwork:    agentNetwork,
-				bootstrapAddr:   bootstrapAddr,
-				wgListenPort:    wgListenPort,
-				agentBinDir:     agentBinDir,
-				manageInterface: manageInterface,
-				wgInterface:     wgInterface,
-				wgEndpoint:      wgEndpoint,
-				wgBackendMode:   wgBackendMode,
-				serverName:      serverName,
-			})
+			return runServe(cmd.Context(), cmd, configPath)
 		},
 	}
-	cmd.Flags().StringVarP(&configPath, "config", "c", "", "path to server.yaml (default values if omitted)")
-	cmd.Flags().StringVar(&dataDir, "data-dir", "claymod-data", "server data directory (CA, identities, inventory)")
-	cmd.Flags().StringVar(&agentNetwork, "agent-network", "10.42.0.0/24", "agent overlay CIDR (IPAM allocations)")
-	cmd.Flags().StringVar(&bootstrapAddr, "bootstrap-listen", ":8443", "HTTPS enrollment listen address")
-	cmd.Flags().StringVar(&wgInterface, "wg-interface", "claymod0", "WireGuard interface name (peers are managed on it)")
-	cmd.Flags().StringVar(&wgEndpoint, "wg-endpoint", "127.0.0.1:51821", "WireGuard endpoint agents connect to (host:port)")
-	cmd.Flags().IntVar(&wgListenPort, "wg-port", 51821, "WireGuard UDP listen port (written to the generated config)")
-	cmd.Flags().StringVar(&agentBinDir, "agent-bin-dir", "", "directory of claymod-agent binaries to serve at /agent/{goos}/{goarch} (default: <data-dir>/agents)")
-	cmd.Flags().BoolVar(&manageInterface, "manage-interface", true, "create/refresh the WireGuard interface at startup (needs CAP_NET_ADMIN); --manage-interface=false to drive wg-quick yourself")
-	cmd.Flags().StringVar(&wgBackendMode, "wg-backend", "wgctrl", "WireGuard backend: wgctrl (real, needs root) or fake (testing)")
-	cmd.Flags().StringVar(&serverName, "server-name", "claymod", "CN/SAN on the bootstrap server certificate (agents pin it)")
+	cmd.Flags().StringVarP(&configPath, "config", "c", "", "path to server.yaml (the primary configuration source; defaults if omitted)")
+	// Flags carry their defaults for --help only: mergeServeConfig uses
+	// a value ONLY when the flag was explicitly set, so the config file
+	// always wins over defaults.
+	cmd.Flags().String("data-dir", "claymod-data", "server data directory (CA, identities, inventory)")
+	cmd.Flags().String("agent-network", "10.42.0.0/24", "agent overlay CIDR (IPAM allocations)")
+	cmd.Flags().String("bootstrap-listen", ":8443", "HTTPS enrollment listen address")
+	cmd.Flags().String("wg-interface", "claymod0", "WireGuard interface name (peers are managed on it)")
+	cmd.Flags().String("wg-endpoint", "127.0.0.1:51821", "WireGuard endpoint agents connect to (host:port)")
+	cmd.Flags().Int("wg-port", 51821, "WireGuard UDP listen port (written to the generated config)")
+	cmd.Flags().String("agent-bin-dir", "", "directory of claymod-agent binaries to serve at /agent/{goos}/{goarch} (default: <data-dir>/agents)")
+	cmd.Flags().Bool("manage-interface", true, "create/refresh the WireGuard interface at startup (needs CAP_NET_ADMIN); --manage-interface=false to drive wg-quick yourself")
+	cmd.Flags().String("wg-backend", "wgctrl", "WireGuard backend: wgctrl (real, needs root) or fake (testing)")
+	cmd.Flags().String("server-name", "claymod", "CN/SAN on the bootstrap server certificate (agents pin it)")
 	return cmd
 }
 
-type serveOptions struct {
-	configPath      string
-	dataDir         string
-	agentNetwork    string
-	bootstrapAddr   string
-	wgListenPort    int
-	agentBinDir     string
-	manageInterface bool
-	wgInterface     string
-	wgEndpoint      string
-	wgBackendMode   string
-	serverName      string
+// mergeServeConfig loads the server.yaml config (the primary source,
+// with its own defaults) and applies ONLY the CLI flags the user
+// explicitly set — flag defaults never clobber config values.
+func mergeServeConfig(cmd *cobra.Command, configPath string) (*config.Server, error) {
+	cfg, err := config.LoadServer(configPath)
+	if err != nil {
+		return nil, err
+	}
+	f := cmd.Flags()
+	setString := func(name string, dst *string) {
+		if f.Changed(name) {
+			v, _ := f.GetString(name)
+			*dst = v
+		}
+	}
+	setInt := func(name string, dst *int) {
+		if f.Changed(name) {
+			v, _ := f.GetInt(name)
+			*dst = v
+		}
+	}
+	setBool := func(name string, dst *bool) {
+		if f.Changed(name) {
+			v, _ := f.GetBool(name)
+			*dst = v
+		}
+	}
+	setString("data-dir", &cfg.DataDir)
+	setString("agent-network", &cfg.AgentNetwork)
+	setString("bootstrap-listen", &cfg.BootstrapListen)
+	setString("server-name", &cfg.ServerName)
+	setString("wg-interface", &cfg.WGInterface)
+	setString("wg-endpoint", &cfg.WGEndpoint)
+	setInt("wg-port", &cfg.WGPort)
+	setString("agent-bin-dir", &cfg.AgentBinDir)
+	setBool("manage-interface", &cfg.ManageInterface)
+	setString("wg-backend", &cfg.WGBackend)
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("server configuration (config file + flags): %w", err)
+	}
+	return cfg, nil
 }
 
-func runServe(ctx context.Context, cmd *cobra.Command, o serveOptions) error {
-	cfg, err := config.LoadServer(o.configPath)
+func runServe(ctx context.Context, cmd *cobra.Command, configPath string) error {
+	cfg, err := mergeServeConfig(cmd, configPath)
 	if err != nil {
 		return err
 	}
-	if o.dataDir != "" {
-		cfg.DataDir = o.dataDir
-	}
-	if o.agentNetwork != "" {
-		cfg.AgentNetwork = o.agentNetwork
-	}
 	log := newLogger(cfg.LogLevel)
 
-	st, err := state.Open(cfg.DataDir, o.serverName)
+	st, err := state.Open(cfg.DataDir, cfg.ServerName)
 	if err != nil {
 		return err
 	}
@@ -118,19 +123,19 @@ func runServe(ctx context.Context, cmd *cobra.Command, o serveOptions) error {
 	defer inv.Close()
 
 	var backend wgmanager.Backend
-	switch o.wgBackendMode {
+	switch cfg.WGBackend {
 	case "fake":
 		backend = wgmanager.NewFakeBackend()
 		log.Warn("using fake wireguard backend (peers are not installed on a real interface)")
 	case "wgctrl", "":
-		backend = wgmanager.NewWgctrlBackend(o.wgInterface)
+		backend = wgmanager.NewWgctrlBackend(cfg.WGInterface)
 	default:
-		return fmt.Errorf("unknown wireguard backend %q (want wgctrl or fake)", o.wgBackendMode)
+		return fmt.Errorf("unknown wireguard backend %q (want wgctrl or fake)", cfg.WGBackend)
 	}
-	wgMgr := wgmanager.NewWithKeys(o.wgInterface, st.WGKeys, backend, o.wgEndpoint)
+	wgMgr := wgmanager.NewWithKeys(cfg.WGInterface, st.WGKeys, backend, cfg.WGEndpoint)
 	wgMgr.Overlay = inv.ServerIP() + "/" + strconv.Itoa(overlayPrefixLen(cfg.AgentNetwork))
-	wgMgr.ListenPort = o.wgListenPort
-	wgMgr.ConfPath = wgmgr.ConfPath(cfg.DataDir, o.wgInterface)
+	wgMgr.ListenPort = cfg.WGPort
+	wgMgr.ConfPath = wgmgr.ConfPath(cfg.DataDir, cfg.WGInterface)
 	// The inventory is the source of truth for the config file: serve
 	// and `host revoke` both regenerate from it, so neither can
 	// resurrect a peer the other removed.
@@ -150,21 +155,21 @@ func runServe(ctx context.Context, cmd *cobra.Command, o serveOptions) error {
 	log.Info("wireguard configuration written", "path", wgMgr.ConfPath, "peers", len(peers))
 
 	switch {
-	case o.wgBackendMode == "fake":
+	case cfg.WGBackend == "fake":
 		// Testing mode: there is no real WireGuard interface to
 		// manage (the README loopback demo and the simulation run
 		// without CAP_NET_ADMIN).
 		log.Info("wireguard interface not managed (fake backend)")
-	case o.manageInterface:
+	case cfg.ManageInterface:
 		if err := wgmgr.EnsureInterface(wgMgr.ConfConfig()); err != nil {
 			return fmt.Errorf("manage-interface: %w", err)
 		}
-		log.Info("wireguard interface ensured", "interface", o.wgInterface)
+		log.Info("wireguard interface ensured", "interface", cfg.WGInterface)
 	default:
-		log.Info("wireguard interface is operator-managed (--manage-interface=false; apply the generated config with wg-quick / wg syncconf)")
+		log.Info("wireguard interface is operator-managed (manage_interface: false; apply the generated config with wg-quick / wg syncconf)")
 	}
 
-	agentDir := o.agentBinDir
+	agentDir := cfg.AgentBinDir
 	if agentDir == "" {
 		agentDir = filepath.Join(cfg.DataDir, "agents")
 	}
@@ -189,7 +194,7 @@ func runServe(ctx context.Context, cmd *cobra.Command, o serveOptions) error {
 	mux := enrollSrv.Handler()
 
 	srv := &http.Server{
-		Addr:    o.bootstrapAddr,
+		Addr:    cfg.BootstrapListen,
 		Handler: mux,
 		TLSConfig: &tls.Config{
 			Certificates: []tls.Certificate{st.ServerID.Certificate},
@@ -198,7 +203,7 @@ func runServe(ctx context.Context, cmd *cobra.Command, o serveOptions) error {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	log.Info("bootstrap endpoint listening (https)",
-		"addr", o.bootstrapAddr, "server_name", o.serverName)
+		"addr", cfg.BootstrapListen, "server_name", cfg.ServerName)
 	// The CA fingerprint pins `--ca-pin` enrollment (and `--ca`
 	// verification); the one-liner is token-only.
 	out := cmd.OutOrStdout()
@@ -263,7 +268,7 @@ func newHostTokenCmd() *cobra.Command {
 			// Host subcommands touch only the inventory: opening the full
 			// server state here would create the bootstrap certificate
 			// before `serve` runs (with the wrong name).
-			if dataDir != "" {
+			if cmd.Flags().Changed("data-dir") {
 				cfg.DataDir = dataDir
 			}
 			inv, err := inventory.Open(filepath.Join(cfg.DataDir, "inventory.db"), cfg.AgentNetwork)
@@ -314,7 +319,7 @@ func newHostListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if dataDir != "" {
+			if cmd.Flags().Changed("data-dir") {
 				cfg.DataDir = dataDir
 			}
 			inv, err := inventory.Open(filepath.Join(cfg.DataDir, "inventory.db"), cfg.AgentNetwork)
@@ -363,7 +368,7 @@ func newHostRevokeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if dataDir != "" {
+			if cmd.Flags().Changed("data-dir") {
 				cfg.DataDir = dataDir
 			}
 			inv, err := inventory.Open(filepath.Join(cfg.DataDir, "inventory.db"), cfg.AgentNetwork)
