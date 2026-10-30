@@ -1,0 +1,87 @@
+/// Unix users and groups. The concept is identical on every Unix; only
+/// the tool names differ — the recipes use the POSIX/shadow userland
+/// (useradd, userdel, groupadd, groupdel) when present and fall back to
+/// BusyBox (adduser, deluser, addgroup, delgroup), which covers
+/// busybox-only systems like stock Alpine.
+///
+/// All recipes are idempotent (guarded) and quote every value; names
+/// are validated to the conservative Unix charset.
+module claymod.std.users
+
+import "modulepath:/claymod/base.pkl"
+
+/// Ensures a user account exists. Idempotent: an existing user is left
+/// untouched (attribute changes need Absent + Present or manual work —
+/// v1 does not modify existing accounts).
+class Present extends base.Resource {
+  type = "std.users.Present"
+
+  /// Login name (lowercase letters, digits, "_" and "-"; max 32 chars,
+  /// must not start with "-").
+  name: String
+
+  /// Numeric uid (empty = let the system allocate).
+  uid: String = ""
+
+  /// Primary group name; the group must already exist (empty = the
+  /// system default, typically a per-user group).
+  group: String = ""
+
+  /// Login shell (empty = the system default; e.g. "/usr/sbin/nologin"
+  /// for service accounts).
+  shell: String = ""
+
+  /// System account (no password aging; home conventions differ).
+  system: Boolean = false
+
+  /// Create the home directory. Passed explicitly (-m / no -H) so the
+  /// result is identical on distros whose defaults differ.
+  createHome: Boolean = true
+}
+
+/// Ensures a user account is absent. Idempotent: a missing user is
+/// already gone.
+class Absent extends base.Resource {
+  type = "std.users.Absent"
+
+  /// Login name.
+  name: String
+
+  /// Also remove the home directory and mail spool (userdel -r /
+  /// deluser --remove-home). Default: keep the home directory.
+  removeHome: Boolean = false
+}
+
+/// Ensures a group exists (or is absent). The group check reads
+/// /etc/group directly — no getent dependency.
+class Group extends base.Resource {
+  type = "std.users.Group"
+
+  /// Group name (same charset as user names).
+  name: String
+
+  /// Numeric gid (empty = let the system allocate).
+  gid: String = ""
+
+  /// "present" (default) or "absent".
+  ensure: String = "present"
+}
+
+/// Manages one SSH public key in a user's ~/.ssh/authorized_keys.
+/// Idempotent per key: other keys (and other tools' entries) are left
+/// alone. The .ssh directory and file are created with strict modes
+/// (0700 / 0600) and the user's ownership.
+class AuthorizedKey extends base.Resource {
+  type = "std.users.AuthorizedKey"
+
+  /// The user whose authorized_keys to manage (must exist in
+  /// /etc/passwd; the home is looked up there).
+  user: String
+
+  /// The full public key line, e.g.
+  /// "ssh-ed25519 AAAA... comment".
+  key: String
+
+  /// "present" (default) or "absent".
+  ensure: String = "present"
+}
