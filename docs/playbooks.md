@@ -131,6 +131,44 @@ shortcut); `schedule`, `command` and the resource name must be single
 lines without `#` in the name. A missing crontab binary fails the op
 with a clear stderr instead of silently succeeding.
 
+### std.assert
+
+| Resource | Purpose | Key fields |
+|---|---|---|
+| `assert.Command` | assert a command exits 0 | `command`, `timeout` |
+| `assert.FileContains` | assert a file contains a literal string | `path`, `pattern` (fixed, no regex) |
+| `assert.PortListening` | assert something LISTENs on a TCP port | `port` (1-65535) |
+
+An assertion is an ordinary command op with assertion semantics: a
+non-zero exit **fails the apply for that host** (stderr is reported).
+Pair assertions with `dependsOn` on the resources they verify — e.g.
+restart the app, then `assert.PortListening { port = 8080 }`. The port
+check uses `ss` (systemd distros) or `netstat` (busybox) and matches
+the port as a whole address component, so `:8080` never satisfies
+`:80`.
+
+### std.users
+
+| Resource | Purpose | Key fields |
+|---|---|---|
+| `users.Present` | ensure a user account exists | `name`, `uid?`, `group?`, `shell?`, `system`, `createHome` |
+| `users.Absent` | ensure a user account is gone | `name`, `removeHome` |
+| `users.Group` | ensure a group exists / is absent | `name`, `gid?`, `ensure` |
+| `users.AuthorizedKey` | manage one SSH key in `authorized_keys` | `user`, `key`, `ensure` |
+
+The Unix *concept* is identical everywhere; the tools are not. Recipes
+prefer the shadow userland (`useradd`, `userdel`, `groupadd`,
+`groupdel`) and fall back to BusyBox (`adduser`, `deluser`, `addgroup`,
+`delgroup`) — which covers busybox-only systems like stock Alpine;
+options always precede the name (busybox does not permute argv).
+Idempotence: `Present` skips an existing user (v1 never edits existing
+accounts), guards read `/etc/group` and `/etc/passwd` directly (no
+getent dependency), and `AuthorizedKey` looks the home directory up in
+`/etc/passwd`, creates `~/.ssh` (0700) and `authorized_keys` (0600)
+with the user's ownership, and touches only its own key line. Names are
+validated to the conservative Unix charset (lowercase letters, digits,
+`_`, `-`; max 32).
+
 ## Templates
 
 `files.Template` and `commands.Script` content render server-side with
