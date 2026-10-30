@@ -245,6 +245,8 @@ Shared PKL libraries come from git repos pinned in
 `claymod.project.yaml` (managed with `claymod lib list|sync`; see
 [docs/playbooks.md](docs/playbooks.md#libraries)).
 
+Start a new playbook from a scaffold with `claymod playbook init <dir>`.
+
 Full authoring guide: [docs/playbooks.md](docs/playbooks.md). Examples
 live in [examples/](examples/).
 

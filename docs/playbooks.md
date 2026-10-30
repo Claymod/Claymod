@@ -151,11 +151,21 @@ listen_port = {{.Vars.port}}
 
 ## Workflow
 
+Start a new playbook from the scaffold (a valid starter playbook with
+literal, templated and copied file resources, plus a project file for
+library pins — skipped when a parent directory already has one):
+
 ```sh
-claymod playbook validate playbook.pkl   # schema, names, deps, cycles
-claymod playbook plan playbook.pkl       # dependency-ordered task list
-claymod playbook apply playbook.pkl      # push to the targeted hosts
-claymod playbook apply playbook.pkl --check   # dry run
+claymod playbook init my-playbook
+```
+
+Then the usual loop:
+
+```sh
+claymod playbook validate my-playbook/playbook.pkl   # schema, names, deps, cycles
+claymod playbook plan my-playbook/playbook.pkl       # dependency-ordered task list
+claymod playbook apply my-playbook/playbook.pkl      # push to the targeted hosts
+claymod playbook apply my-playbook/playbook.pkl --check   # dry run
 ```
 
 Useful flags on all three commands: `--module-path <dir>` (repeatable;
