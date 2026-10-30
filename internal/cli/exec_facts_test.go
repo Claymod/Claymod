@@ -213,7 +213,7 @@ func TestHostFactsCached(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	host.Facts = `{"hostname":"web01","os":"linux","arch":"arm64","kernel":"6.1"}`
+	host.Facts = `{"hostname":"web01","os":"linux","arch":"aarch64","kernel":"6.1"}`
 	if err := inv.UpdateHost(host); err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +228,7 @@ func TestHostFactsCached(t *testing.T) {
 		t.Fatalf("host facts --cached returned error: %v\noutput:\n%s", err, out.String())
 	}
 	log := out.String()
-	for _, want := range []string{"(cached)", "os=linux", "arch=arm64"} {
+	for _, want := range []string{"(cached)", "os=linux", "arch=aarch64"} {
 		if !strings.Contains(log, want) {
 			t.Errorf("cached facts output missing %q:\n%s", want, log)
 		}

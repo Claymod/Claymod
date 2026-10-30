@@ -90,8 +90,8 @@ func TestAgentDownloadDisabledWithoutDir(t *testing.T) {
 func TestAgentDigestsListsFiles(t *testing.T) {
 	dir := t.TempDir()
 	payload := []byte("agent")
-	os.WriteFile(filepath.Join(dir, "claymod-agent-linux-arm64"), payload, 0o755)
-	os.WriteFile(filepath.Join(dir, "claymod-agent-darwin-arm64"), payload, 0o755)
+	os.WriteFile(filepath.Join(dir, "claymod-agent-linux-aarch64"), payload, 0o755)
+	os.WriteFile(filepath.Join(dir, "claymod-agent-darwin-aarch64"), payload, 0o755)
 	os.WriteFile(filepath.Join(dir, "README"), []byte("ignore"), 0o644)
 
 	lines, err := AgentDigests(dir)
@@ -107,7 +107,7 @@ func TestAgentDigestsListsFiles(t *testing.T) {
 			t.Errorf("line %q missing the payload digest", line)
 		}
 		if !strings.HasPrefix(line, "darwin-") && !strings.HasPrefix(line, "linux-") {
-			t.Errorf("line %q should start with goos-goarch", line)
+			t.Errorf("line %q should start with os-arch", line)
 		}
 	}
 	_ = fmt.Sprint() // keep fmt import honest

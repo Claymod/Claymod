@@ -33,8 +33,8 @@ agent_port: 2323
 # debug|info|warn|error
 log_level: info
 
-# Directory of claymod-agent-<goos>-<goarch> binaries offered for
-# download at /agent/{goos}/{goarch} (empty = <data_dir>/agents).
+# Directory of claymod-agent-<os>-<arch> binaries offered for
+# download at /agent/{os}/{arch} (empty = <data_dir>/agents).
 agent_bin_dir: ""
 
 # WireGuard overlay. A real deployment sets wg_endpoint to the public

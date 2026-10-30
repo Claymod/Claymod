@@ -47,7 +47,8 @@ and verify against `SHA256SUMS`:
 
 ```sh
 BASE=https://github.com/Claymod/Claymod/releases/latest/download
-curl -fsSL -O $BASE/claymod-linux-<arch> -O $BASE/claymod-agent-linux-<arch> -O $BASE/SHA256SUMS
+arch=$(uname -m | sed s/x86_64/amd64/)   # aarch64 stays aarch64
+curl -fsSL -O $BASE/claymod-linux-$arch -O $BASE/claymod-agent-linux-$arch -O $BASE/SHA256SUMS
 sha256sum -c --ignore-missing SHA256SUMS
 ```
 
@@ -72,7 +73,7 @@ database, no PKL tooling and no wgctrl.
 HTTPS bootstrap endpoint:
 
 ```sh
-make agents                      # bin/agents/claymod-agent-<goos>-<goarch>
+make agents                      # bin/agents/claymod-agent-<os>-<arch>
 claymod serve --agent-bin-dir bin/agents ...
 ```
 
@@ -80,9 +81,10 @@ On the host, with only `curl` and the pinned CA bundle (or the server's
 certificate fingerprint) in hand:
 
 ```sh
+arch=$(uname -m | sed s/x86_64/amd64/)   # aarch64 stays aarch64
 curl --cacert ca.pem -o claymod-agent \
-  https://control:8443/agent/linux/amd64
-curl --cacert ca.pem https://control:8443/agent/linux/amd64.sha256
+  https://control:8443/agent/linux/$arch
+curl --cacert ca.pem https://control:8443/agent/linux/$arch.sha256
 shasum -a 256 claymod-agent        # compare with the digest above
 chmod +x claymod-agent
 ./claymod-agent enroll --server https://control:8443 --token ... --hostname ...
@@ -179,7 +181,7 @@ bin/claymod host token web01 --data-dir demo --token-file demo/token
 
 # 4. Enroll the host with the agent binary (pinned to the CA the server
 #    just created). In an air-gapped setup this binary comes from
-#    https://localhost:8443/agent/<goos>/<goarch> instead of ./bin.
+#    https://localhost:8443/agent/<os>/<arch> instead of ./bin.
 bin/claymod-agent enroll --server https://localhost:8443 \
   --token "$(cat demo/token)" --hostname web01 \
   --ca demo/ca/ca.pem --out-dir demo/host --listen 127.0.0.1:2323 \

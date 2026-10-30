@@ -142,7 +142,7 @@ OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH="$(uname -m)"
 case "$ARCH" in
   x86_64)        ARCH=amd64 ;;
-  aarch64|arm64) ARCH=arm64 ;;
+  aarch64|arm64) ARCH=aarch64 ;;
 esac
 
 # 2. Download the agent and check its served digest (corruption guard;

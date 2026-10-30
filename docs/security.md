@@ -155,7 +155,7 @@ channel-controlling MITM, who can terminate/relay TLS and read it.
 The host agent is a **separate small static binary** (`claymod-agent`,
 ~7 MB) with a light dependency closure (no database, no PKL tooling, no
 wgctrl). It can be served by the control server itself
-(`GET /agent/{goos}/{goarch}` on the bootstrap channel) for air-gapped
+(`GET /agent/{os}/{arch}` on the bootstrap channel) for air-gapped
 hosts. The binary carries no secrets; integrity comes from SHA-256
 digests — logged by `serve` at startup and served as a `.sha256` sidecar
 for comparison on the host. A pinned channel (CA bundle / fingerprint,

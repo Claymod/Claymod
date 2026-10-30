@@ -22,13 +22,15 @@ agent:
 		-o $(AGENT_BIN) ./cmd/claymod-agent
 
 # Cross-compiled agents for the bootstrap download endpoint
-# (claymod serve --agent-bin-dir serves these).
+# (claymod serve --agent-bin-dir serves these). Asset names follow
+# uname(1) spelling (aarch64) even though Go's GOARCH is arm64.
 agents:
 	@mkdir -p bin/agents
 	@for pair in linux/amd64 linux/arm64 darwin/arm64 darwin/amd64; do \
-		os=$${pair%%/*}; arch=$${pair##*/}; \
+		os=$${pair%%/*}; goarch=$${pair##*/}; \
+		arch=$$(echo $$goarch | sed 's/arm64/aarch64/'); \
 		echo "building bin/agents/claymod-agent-$$os-$$arch"; \
-		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch $(GO) build -trimpath \
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$goarch $(GO) build -trimpath \
 			-ldflags "$(LDFLAGS) -X main.version=$(VERSION)" \
 			-o bin/agents/claymod-agent-$$os-$$arch ./cmd/claymod-agent; \
 	done
@@ -39,11 +41,12 @@ agents:
 release:
 	@mkdir -p dist
 	@for pair in linux/amd64 linux/arm64 darwin/arm64; do \
-		os=$${pair%%/*}; arch=$${pair##*/}; \
-		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch $(GO) build -trimpath \
+		os=$${pair%%/*}; goarch=$${pair##*/}; \
+		arch=$$(echo $$goarch | sed 's/arm64/aarch64/'); \
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$goarch $(GO) build -trimpath \
 			-ldflags "$(LDFLAGS) -X github.com/claymod/claymod/internal/cli.version=$(VERSION)" \
 			-o dist/claymod-$$os-$$arch ./cmd/claymod; \
-		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch $(GO) build -trimpath \
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$goarch $(GO) build -trimpath \
 			-ldflags "$(LDFLAGS) -X main.version=$(VERSION)" \
 			-o dist/claymod-agent-$$os-$$arch ./cmd/claymod-agent; \
 	done

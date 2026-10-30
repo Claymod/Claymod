@@ -33,8 +33,9 @@ type Server struct {
 	WG  *wgmanager.Manager
 	Log *slog.Logger
 	// AgentBinDir holds claymod-agent binaries served to hosts during
-	// bootstrap (GET /agent/{goos}/{goarch}), air-gap friendly. Empty
-	// disables the endpoint. Files are named claymod-agent-<goos>-<goarch>.
+	// bootstrap (GET /agent/{os}/{arch}), air-gap friendly. Empty
+	// disables the endpoint. Files are named claymod-agent-<os>-<arch>
+	// (arch in uname(1) spelling: amd64, aarch64).
 	AgentBinDir string
 	// HostnameHeader optionally pins the expected hostname header.
 	now func() time.Time
@@ -177,7 +178,7 @@ func (s *Server) Revoke(hostname string) error {
 }
 
 // handleAgentDownload serves the agent binary (and its .sha256 digest)
-// for GET /agent/<goos>/<goarch> — the air-gap bootstrap flow: the host
+// for GET /agent/<os>/<arch> — the air-gap bootstrap flow: the host
 // fetches its agent over the same pinned TLS channel as enrollment.
 // The binary carries no secrets; integrity comes from the .sha256 digest
 // (compare with the one `claymod serve` logs at startup).
@@ -189,23 +190,23 @@ func (s *Server) handleAgentDownload(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/agent/")
 	parts := strings.Split(strings.Trim(rest, "/"), "/")
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		httpError(w, http.StatusNotFound, "want /agent/<goos>/<goarch>")
+		httpError(w, http.StatusNotFound, "want /agent/<os>/<arch>")
 		return
 	}
-	goos, goarch := parts[0], parts[1]
-	wantDigest := strings.HasSuffix(goarch, ".sha256")
+	goos, arch := parts[0], parts[1]
+	wantDigest := strings.HasSuffix(arch, ".sha256")
 	if wantDigest {
-		goarch = strings.TrimSuffix(goarch, ".sha256")
+		arch = strings.TrimSuffix(arch, ".sha256")
 	}
-	if !knownPlatforms(goos + "/" + goarch) {
-		httpError(w, http.StatusNotFound, fmt.Sprintf("no agent for %s/%s", goos, goarch))
+	if !knownPlatforms(goos + "/" + arch) {
+		httpError(w, http.StatusNotFound, fmt.Sprintf("no agent for %s/%s", goos, arch))
 		return
 	}
-	path := filepath.Join(s.AgentBinDir, "claymod-agent-"+goos+"-"+goarch)
+	path := filepath.Join(s.AgentBinDir, "claymod-agent-"+goos+"-"+arch)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		httpError(w, http.StatusNotFound,
-			fmt.Sprintf("no agent binary for %s/%s on the server: drop the release asset claymod-agent-%s-%s into --agent-bin-dir", goos, goarch, goos, goarch))
+			fmt.Sprintf("no agent binary for %s/%s on the server: drop the release asset claymod-agent-%s-%s into --agent-bin-dir", goos, arch, goos, arch))
 		return
 	}
 	if wantDigest {
@@ -218,17 +219,18 @@ func (s *Server) handleAgentDownload(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
-// knownPlatforms lists the GOOS/GOARCH pairs claymod agents are built
-// for (see `make agents`).
+// knownPlatforms lists the os/arch pairs claymod agents are built for
+// (see `make agents`). Arch tokens follow uname(1) nomenclature —
+// aarch64, not Go's arm64.
 func knownPlatforms(pair string) bool {
 	switch pair {
-	case "linux/amd64", "linux/arm64", "darwin/amd64", "darwin/arm64":
+	case "linux/amd64", "linux/aarch64", "darwin/amd64", "darwin/aarch64":
 		return true
 	}
 	return false
 }
 
-// AgentDigests returns "<goos>-<goarch> <sha256>" lines for every agent
+// AgentDigests returns "<os>-<arch> <sha256>" lines for every agent
 // binary in dir (serve logs these at startup for out-of-band
 // verification).
 func AgentDigests(dir string) ([]string, error) {

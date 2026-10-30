@@ -118,7 +118,7 @@ What the script does, in order, failing closed at every step:
    `wireguard-tools` by hand (apt/dnf/yum/zypper/pacman/apk) and
    re-running;
 1. downloads `claymod-agent` for this platform from
-   `GET /agent/{goos}/{goarch}` (transport unauthenticated — the token
+   `GET /agent/{os}/{arch}` (transport unauthenticated — the token
    is the credential);
 2. checks the agent binary against its served SHA-256 digest;
 3. enrolls (single-use token, WireGuard key generated locally);
@@ -151,16 +151,17 @@ one TLS channel:
 
 ```sh
 # on the host, with ca.pem in hand:
+arch=$(uname -m | sed s/x86_64/amd64/)   # x86_64 → amd64; aarch64 as-is
 curl --cacert ca.pem -o claymod-agent \
-  https://control:8443/agent/linux/amd64
-curl --cacert ca.pem https://control:8443/agent/linux/amd64.sha256
+  https://control:8443/agent/linux/$arch
+curl --cacert ca.pem https://control:8443/agent/linux/$arch.sha256
 shasum -a 256 claymod-agent     # compare with the served digest
 chmod +x claymod-agent
 ```
 
 `claymod serve --agent-bin-dir <dir>` (default `<data-dir>/agents`)
 exposes binaries placed there: the filename is the mapping —
-`GET /agent/linux/amd64` serves `<dir>/claymod-agent-linux-amd64`
+`GET /agent/<os>/<arch>` serves `<dir>/claymod-agent-<os>-<arch>`
 (i.e. the GitHub release asset name, unchanged). Drop the release
 assets in (or `make agents` to cross-compile); a file named just
 `claymod-agent` is invisible to the endpoint. `serve` logs each digest

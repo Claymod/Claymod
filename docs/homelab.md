@@ -53,8 +53,8 @@ Both binaries are published on every release as static linux builds
 | `claymod` | VPS | `claymod-linux-<arch>` | control server + CLI; needs the `pkl` CLI |
 | `claymod-agent` | managed hosts | `claymod-agent-linux-<arch>` | static, no dependencies |
 
-`uname -m`: `x86_64` → amd64, `aarch64` → arm64 (Debian on UTM/Apple
-Silicon is arm64). No Go toolchain needed anywhere; from a checkout,
+`uname -m` reports `x86_64` or `aarch64` (Debian on UTM/Apple
+Silicon is aarch64). No Go toolchain needed anywhere; from a checkout,
 `make build` / `make agents` produce the same binaries.
 
 ## Phase 1 — Control server on the VPS
@@ -67,19 +67,20 @@ apt update && apt install -y wireguard-tools rsync
 
 # control binary, checksum-verified
 BASE=https://github.com/Claymod/Claymod/releases/latest/download
-curl -fsSL -O $BASE/claymod-linux-<arch> -O $BASE/SHA256SUMS
-grep "claymod-linux-<arch>$" SHA256SUMS | sha256sum -c -
-install -m 0755 claymod-linux-<arch> /usr/local/bin/claymod
+arch=$(uname -m | sed s/x86_64/amd64/)   # x86_64 → amd64; aarch64 as-is
+curl -fsSL -O $BASE/claymod-linux-$arch -O $BASE/SHA256SUMS
+grep "claymod-linux-$arch$" SHA256SUMS | sha256sum -c -
+install -m 0755 claymod-linux-$arch /usr/local/bin/claymod
 
 # agent binaries the one-liner downloads from the server
-curl -fsSL -O $BASE/claymod-agent-linux-<arch>
-grep "claymod-agent-linux-<arch>$" SHA256SUMS | sha256sum -c -
+curl -fsSL -O $BASE/claymod-agent-linux-$arch
+grep "claymod-agent-linux-$arch$" SHA256SUMS | sha256sum -c -
 mkdir -p /root/claymod/agents
-install -m 0755 claymod-agent-linux-<arch> /root/claymod/agents/
+install -m 0755 claymod-agent-linux-$arch /root/claymod/agents/
 ```
 
-Keep the release file names: `GET /agent/<goos>/<goarch>` serves
-`claymod-agent-<goos>-<goarch>` out of `agent_bin_dir` — a file named
+Keep the release file names: `GET /agent/<os>/<arch>` serves
+`claymod-agent-<os>-<arch>` out of `agent_bin_dir` — a file named
 just `claymod-agent` is invisible to it
 ([docs/security.md](security.md#agent-binary-distribution)).
 `wireguard-tools` is for `wg` diagnostics only; `serve` manages the
@@ -327,7 +328,7 @@ cat /etc/motd                # → "Managed by claymod."
 | Symptom | Likely cause |
 |---|---|
 | one-liner exits 0 but nothing happened | `curl \| sh` reports sh's exit code — a failed fetch looks like success; watch for the `==` progress lines |
-| one-liner: `curl: (22) … 404` on the agent download | serve isn't serving binaries — read the startup log: `directory does not exist` = wrong `agent_bin_dir`; `no claymod-agent-<goos>-<goarch> files` = empty dir or renamed files (keep the release names) |
+| one-liner: `curl: (22) … 404` on the agent download | serve isn't serving binaries — read the startup log: `directory does not exist` = wrong `agent_bin_dir`; `no claymod-agent-<os>-<arch> files` = empty dir or renamed files (keep the release names) |
 | `curl: (60) SSL certificate problem` fetching `/enroll.sh` | missing `-k` (the bootstrap certificate is internal-CA-issued) |
 | agent dead after a VM reboot | the tunnel is gone — `sudo claymod-agent wg-setup --out-dir /etc/claymod` |
 | `wg show` empty on the VPS | `wg_backend: fake` in server.yaml, or watch the serve log for `wireguard configuration written` |

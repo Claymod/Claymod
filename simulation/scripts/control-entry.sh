@@ -13,9 +13,11 @@ export CLAYMOD_SCHEMA_DIR="${CLAYMOD_SCHEMA_DIR:-/pkl}"
 echo "== starting claymod serve (HTTPS bootstrap on :8443)"
 mkdir -p "$DATA_DIR/agents"
 # Stage the agent binary for download during bootstrap (air-gap flow:
-# hosts fetch their agent over the pinned TLS channel).
-cp /opt/claymod-agent-src "$DATA_DIR/agents/claymod-agent-linux-amd64"
-chmod 0755 "$DATA_DIR/agents/claymod-agent-linux-amd64"
+# hosts fetch their agent over the pinned TLS channel). The filename is
+# the uname(1) arch (aarch64), x86_64 spelled amd64.
+ARCH=$(uname -m | sed -e 's/x86_64/amd64/' -e 's/arm64/aarch64/')
+cp /opt/claymod-agent-src "$DATA_DIR/agents/claymod-agent-linux-$ARCH"
+chmod 0755 "$DATA_DIR/agents/claymod-agent-linux-$ARCH"
 claymod serve \
   --data-dir "$DATA_DIR" \
   --agent-bin-dir "$DATA_DIR/agents" \

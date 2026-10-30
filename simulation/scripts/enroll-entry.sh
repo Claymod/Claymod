@@ -25,11 +25,12 @@ TOKEN="$(tr -d '[:space:]' < /shared/token)"
 mkdir -p "$WORK"
 
 echo "== downloading the agent binary from the control server (air-gap bootstrap)"
-curl -fsS --cacert /shared/ca.pem   -o "$WORK/claymod-agent" "$CONTROL_URL/agent/linux/amd64"
+ARCH=$(uname -m | sed -e 's/x86_64/amd64/' -e 's/arm64/aarch64/')
+curl -fsS --cacert /shared/ca.pem   -o "$WORK/claymod-agent" "$CONTROL_URL/agent/linux/$ARCH"
 chmod +x "$WORK/claymod-agent"
 
 echo "== verifying the agent binary digest"
-curl -fsS --cacert /shared/ca.pem   "$CONTROL_URL/agent/linux/amd64.sha256" > "$WORK/expected.sha256"
+curl -fsS --cacert /shared/ca.pem   "$CONTROL_URL/agent/linux/$ARCH.sha256" > "$WORK/expected.sha256"
 ACTUAL="$(sha256sum "$WORK/claymod-agent" | awk '{print $1}')"
 EXPECTED="$(awk '{print $1}' "$WORK/expected.sha256")"
 if [ "$ACTUAL" != "$EXPECTED" ]; then

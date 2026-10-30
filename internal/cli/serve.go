@@ -55,7 +55,7 @@ parameters; every CLI flag overrides only when it is explicitly given.`,
 	cmd.Flags().String("wg-interface", "claymod0", "WireGuard interface name (peers are managed on it)")
 	cmd.Flags().String("wg-endpoint", "127.0.0.1:51821", "WireGuard endpoint agents connect to (host:port)")
 	cmd.Flags().Int("wg-port", 51821, "WireGuard UDP listen port (written to the generated config)")
-	cmd.Flags().String("agent-bin-dir", "", "directory of claymod-agent binaries to serve at /agent/{goos}/{goarch} (default: <data-dir>/agents)")
+	cmd.Flags().String("agent-bin-dir", "", "directory of claymod-agent binaries to serve at /agent/{os}/{arch} (default: <data-dir>/agents)")
 	cmd.Flags().Bool("manage-interface", true, "create/refresh the WireGuard interface at startup (needs CAP_NET_ADMIN); --manage-interface=false to drive wg-quick yourself")
 	cmd.Flags().String("wg-backend", "wgctrl", "WireGuard backend: wgctrl (real, needs root) or fake (testing)")
 	cmd.Flags().String("server-name", "claymod", "CN/SAN on the bootstrap server certificate (agents pin it)")
@@ -185,10 +185,10 @@ func runServe(ctx context.Context, cmd *cobra.Command, configPath string) error 
 			cmd.Printf("agent binary %s\n", d)
 		}
 	} else if _, err := os.Stat(agentDir); err != nil {
-		log.Warn("no agent binaries to serve: directory does not exist (create it and drop the release assets claymod-agent-<goos>-<goarch> in)",
+		log.Warn("no agent binaries to serve: directory does not exist (create it and drop the release assets claymod-agent-<os>-<arch> in)",
 			"dir", agentDir)
 	} else {
-		log.Warn("no agent binaries to serve: no claymod-agent-<goos>-<goarch> files here (release asset names, e.g. claymod-agent-linux-amd64)",
+		log.Warn("no agent binaries to serve: no claymod-agent-<os>-<arch> files here (release asset names, e.g. claymod-agent-linux-aarch64)",
 			"dir", agentDir)
 	}
 	mux := enrollSrv.Handler()
@@ -287,7 +287,7 @@ func newHostTokenCmd() *cobra.Command {
 			out := cmd.OutOrStdout()
 			fmt.Fprintf(out, "enrollment token for %s (valid %s):\n  %s\n", args[0], ttl, token)
 			fmt.Fprintf(out, "on the host, download the agent and enroll:\n")
-			fmt.Fprintf(out, "  curl --cacert ca.pem -o claymod-agent https://<control-host>:8443/agent/$(go env GOOS 2>/dev/null || uname -s | tr A-Z a-z)/$(go env GOARCH 2>/dev/null || uname -m | sed s/x86_64/amd64/) && chmod +x claymod-agent\n")
+			fmt.Fprintf(out, "  curl --cacert ca.pem -o claymod-agent https://<control-host>:8443/agent/$(uname -s | tr A-Z a-z)/$(uname -m | sed -e s/x86_64/amd64/ -e s/arm64/aarch64/) && chmod +x claymod-agent\n")
 			fmt.Fprintf(out, "  ./claymod-agent enroll --server https://<control-host>:8443 --token %s --hostname %s --ca-pin <CA fingerprint>\n", token, args[0])
 			if tokenFile != "" {
 				if err := os.WriteFile(tokenFile, []byte(token+"\n"), 0o600); err != nil {

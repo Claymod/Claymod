@@ -22,8 +22,9 @@ if [ "${1:-}" = "--local" ]; then
     CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$WORK/claymod-agent" ./cmd/claymod-agent)
 
   # Stage the agent for download (air-gap flow mirrors docker mode).
-  HOST_OS=$(go env GOOS)
-  HOST_ARCH=$(go env GOARCH)
+  # Arch tokens follow uname(1) (aarch64); x86_64 is spelled amd64.
+  HOST_OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+  HOST_ARCH=$(uname -m | sed -e 's/x86_64/amd64/' -e 's/arm64/aarch64/')
   mkdir -p "$WORK/control/agents"
   cp "$WORK/claymod-agent" "$WORK/control/agents/claymod-agent-$HOST_OS-$HOST_ARCH"
 

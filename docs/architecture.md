@@ -25,7 +25,7 @@ is `internal/agent`, `internal/proto`, `internal/enroll`,
 contains no inventory/playbook/wgctrl packages.
 
 Air-gapped hosts fetch their agent from the control server itself:
-`GET /agent/{goos}/{goarch}` (+ `.sha256`) on the pinned HTTPS bootstrap
+`GET /agent/{os}/{arch}` (+ `.sha256`) on the pinned HTTPS bootstrap
 endpoint serves binaries placed in `--agent-bin-dir`. Integrity is
 by checksum — the digest is logged at startup and served alongside the
 binary for comparison on the host.

@@ -31,7 +31,7 @@ type Server struct {
 	DataDir string `yaml:"data_dir"`
 	// LogLevel is debug|info|warn|error.
 	LogLevel string `yaml:"log_level"`
-	// AgentBinDir serves agent binaries at /agent/{goos}/{goarch}
+	// AgentBinDir serves agent binaries at /agent/{os}/{arch}
 	// (empty = <data_dir>/agents).
 	AgentBinDir string `yaml:"agent_bin_dir"`
 	// WGInterface is the WireGuard interface peers are managed on.

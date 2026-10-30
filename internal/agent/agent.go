@@ -208,12 +208,23 @@ func gatherFacts() proto.FactsResult {
 	facts := proto.FactsResult{
 		Hostname: hostnameOrUnknown(),
 		OS:       runtime.GOOS,
-		Arch:     runtime.GOARCH,
+		Arch:     archToken(),
 	}
 	if data, err := os.ReadFile("/proc/sys/kernel/osrelease"); err == nil {
 		facts.Kernel = trimSpace(string(data))
 	}
 	return facts
+}
+
+// archToken reports the host architecture in the project's arch tokens
+// (amd64/aarch64 — the same ones release assets and /agent/<os>/<arch>
+// use). Go's toolchain spells aarch64 as arm64; uname(1) spells amd64
+// as x86_64, so this is the one shared vocabulary.
+func archToken() string {
+	if runtime.GOARCH == "arm64" {
+		return "aarch64"
+	}
+	return runtime.GOARCH
 }
 
 func hostnameOrUnknown() string {
