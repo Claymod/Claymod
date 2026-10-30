@@ -49,8 +49,17 @@ if [ -n "${PKL_VERSION:-}" ]; then
   version="$PKL_VERSION"
 else
   echo "resolving latest pkl release..."
-  version="$(curl -fsSL https://api.github.com/repos/apple/pkl/releases/latest \
-    | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n1)"
+  # Resolve via the releases/latest REDIRECT, not the GitHub API: the API
+  # rate-limits unauthenticated requests (60/h per IP) and shared CI
+  # runners hit 403 there constantly. The redirect endpoint is not
+  # API-rate-limited. The API stays as a fallback.
+  version="$(curl -fsSLI -o /dev/null -w '%{url_effective}' \
+    https://github.com/apple/pkl/releases/latest 2>/dev/null | sed -n 's|.*/tag/||p' || true)"
+  if [ -z "$version" ]; then
+    echo "(redirect resolution failed, falling back to the GitHub API...)"
+    version="$(curl -fsSL https://api.github.com/repos/apple/pkl/releases/latest 2>/dev/null \
+      | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n1 || true)"
+  fi
   if [ -z "$version" ]; then
     echo "error: could not resolve latest pkl version (set PKL_VERSION=x.y.z)" >&2
     exit 1
