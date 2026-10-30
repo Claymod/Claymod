@@ -35,7 +35,9 @@ func fixtureLibProject(t *testing.T) (string, string) {
 		[]byte("module acme.baseline\n\nmotd = \"acme v1\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	git("init", "--quiet")
+	// The branch name must not depend on ambient git config (CI runners
+	// default to master).
+	git("-c", "init.defaultBranch=main", "init", "--quiet")
 	git("add", "-A")
 	git("commit", "--quiet", "-m", "v1")
 	git("tag", "v1.0.0")

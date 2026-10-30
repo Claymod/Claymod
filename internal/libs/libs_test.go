@@ -43,7 +43,9 @@ func fixtureLibRepo(t *testing.T) (dir, commit1, commit2 string) {
 		}
 		return strings.TrimSpace(string(out))
 	}
-	git("init", "--quiet")
+	// The branch name must not depend on ambient git config (CI runners
+	// default to master): the branch-tracking test pins main.
+	git("-c", "init.defaultBranch=main", "init", "--quiet")
 	write := func(content string) {
 		if err := os.WriteFile(filepath.Join(dir, "pkl", "acme", "baseline.pkl"), []byte(content), 0o644); err != nil {
 			t.Fatal(err)
