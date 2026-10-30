@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -84,6 +85,63 @@ func TestLoadAgentParsesOpTimeout(t *testing.T) {
 	}
 	if a.Listen != "10.42.0.7:2323" {
 		t.Errorf("Listen = %q, want 10.42.0.7:2323", a.Listen)
+	}
+}
+
+func TestLoadServerFull(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "server.yaml")
+	content := `listen: 127.0.0.1:8444
+bootstrap_listen: 0.0.0.0:8443
+server_name: control.corp
+agent_port: 2323
+agent_network: 10.60.0.0/24
+data_dir: /var/lib/claymod
+log_level: warn
+agent_bin_dir: /srv/agents
+wg_interface: wgfirewall0
+wg_endpoint: 203.0.113.7:51821
+wg_port: 51821
+wg_backend: fake
+manage_interface: false
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := LoadServer(path)
+	if err != nil {
+		t.Fatalf("LoadServer: %v", err)
+	}
+	if s.ServerName != "control.corp" || s.BootstrapListen != "0.0.0.0:8443" ||
+		s.DataDir != "/var/lib/claymod" || s.AgentNetwork != "10.60.0.0/24" ||
+		s.AgentBinDir != "/srv/agents" || s.WGInterface != "wgfirewall0" ||
+		s.WGEndpoint != "203.0.113.7:51821" || s.WGPort != 51821 ||
+		s.WGBackend != "fake" || s.ManageInterface {
+		t.Errorf("parsed config mismatch: %+v", s)
+	}
+}
+
+func TestValidateServerNewFields(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*Server)
+		want   string
+	}{
+		{"empty server_name", func(s *Server) { s.ServerName = "" }, "server_name"},
+		{"empty wg_interface", func(s *Server) { s.WGInterface = "" }, "wg_interface"},
+		{"empty wg_endpoint", func(s *Server) { s.WGEndpoint = "" }, "wg_endpoint"},
+		{"bad wg_port", func(s *Server) { s.WGPort = 0 }, "wg_port"},
+		{"bad wg_backend", func(s *Server) { s.WGBackend = "wonky" }, "wg_backend"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := DefaultServer()
+			tc.mutate(&s)
+			if err := s.Validate(); err == nil {
+				t.Fatalf("Validate accepted %s", tc.name)
+			} else if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error = %q, want substring %q", err.Error(), tc.want)
+			}
+		})
 	}
 }
 
