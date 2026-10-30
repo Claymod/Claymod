@@ -99,7 +99,7 @@ func TestModulePath(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Relative, duplicate and empty entries collapse; std always first.
-	got, err := ModulePath("/pb/playbook.pkl", []string{"rel", "", std, "rel"})
+	got, err := ModulePath([]string{"rel", "", std, "rel"})
 	if err != nil {
 		t.Fatalf("ModulePath: %v", err)
 	}
