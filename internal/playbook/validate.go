@@ -53,18 +53,25 @@ func (pb *Playbook) Validate() error {
 // knownTypes lists the resource types the schema v1 produces. Modules
 // (Phase 5) compile these to primitive ops.
 var knownTypes = map[string]bool{
-	"std.files.Copy":      true,
-	"std.files.Template":  true,
-	"std.files.Directory": true,
-	"std.files.Content":   true,
-	"std.files.Line":      true,
-	"std.files.Symlink":   true,
-	"std.files.Fetch":     true,
-	"std.commands.Shell":  true,
-	"std.commands.Script": true,
-	"std.service.Unit":    true,
-	"std.sysctl.Sysctl":   true,
-	"std.cron.Entry":      true,
+	"std.files.Copy":           true,
+	"std.files.Template":       true,
+	"std.files.Directory":      true,
+	"std.files.Content":        true,
+	"std.files.Line":           true,
+	"std.files.Symlink":        true,
+	"std.files.Fetch":          true,
+	"std.commands.Shell":       true,
+	"std.commands.Script":      true,
+	"std.service.Unit":         true,
+	"std.sysctl.Sysctl":        true,
+	"std.cron.Entry":           true,
+	"std.assert.Command":       true,
+	"std.assert.FileContains":  true,
+	"std.assert.PortListening": true,
+	"std.users.Present":        true,
+	"std.users.Absent":         true,
+	"std.users.Group":          true,
+	"std.users.AuthorizedKey":  true,
 }
 
 // KnownType reports whether the resource type is supported.

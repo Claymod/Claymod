@@ -413,6 +413,66 @@ func TestCompileErrors(t *testing.T) {
 			doc:  `{"type": "std.cron.Entry", "name": "x", "schedule": "0 3 * * *", "command": "true", "ensure": "wonky"}`,
 			want: "invalid ensure",
 		},
+		{
+			name: "assert empty command",
+			doc:  `{"type": "std.assert.Command", "name": "x", "command": "  "}`,
+			want: "command is required",
+		},
+		{
+			name: "assert relative path",
+			doc:  `{"type": "std.assert.FileContains", "name": "x", "path": "rel/x", "pattern": "a"}`,
+			want: "absolute",
+		},
+		{
+			name: "assert empty pattern",
+			doc:  `{"type": "std.assert.FileContains", "name": "x", "path": "/a", "pattern": ""}`,
+			want: "pattern is required",
+		},
+		{
+			name: "assert multiline pattern",
+			doc:  `{"type": "std.assert.FileContains", "name": "x", "path": "/a", "pattern": "a\nb"}`,
+			want: "single line",
+		},
+		{
+			name: "assert bad port",
+			doc:  `{"type": "std.assert.PortListening", "name": "x", "port": 70000}`,
+			want: "1..65535",
+		},
+		{
+			name: "users leading dash name",
+			doc:  `{"type": "std.users.Present", "name": "-bad"}`,
+			want: "not a valid Unix name",
+		},
+		{
+			name: "users uppercase name",
+			doc:  `{"type": "std.users.Present", "name": "BadName"}`,
+			want: "not a valid Unix name",
+		},
+		{
+			name: "users bad uid",
+			doc:  `{"type": "std.users.Present", "name": "x", "uid": "12ab"}`,
+			want: "must be numeric",
+		},
+		{
+			name: "users bad gid",
+			doc:  `{"type": "std.users.Group", "name": "x", "gid": "nope"}`,
+			want: "must be numeric",
+		},
+		{
+			name: "users group bad ensure",
+			doc:  `{"type": "std.users.Group", "name": "x", "ensure": "wonky"}`,
+			want: "invalid ensure",
+		},
+		{
+			name: "users key with newline",
+			doc:  `{"type": "std.users.AuthorizedKey", "name": "x", "user": "a", "key": "line1\nline2"}`,
+			want: "single line",
+		},
+		{
+			name: "users empty key",
+			doc:  `{"type": "std.users.AuthorizedKey", "name": "x", "user": "a", "key": ""}`,
+			want: "key is required",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

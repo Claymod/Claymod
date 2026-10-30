@@ -4,9 +4,11 @@
 package all
 
 import (
+	_ "github.com/claymod/claymod/internal/modules/stdassert"
 	_ "github.com/claymod/claymod/internal/modules/stdcommands"
 	_ "github.com/claymod/claymod/internal/modules/stdcron"
 	_ "github.com/claymod/claymod/internal/modules/stdfiles"
 	_ "github.com/claymod/claymod/internal/modules/stdservice"
 	_ "github.com/claymod/claymod/internal/modules/stdsysctl"
+	_ "github.com/claymod/claymod/internal/modules/stdusers"
 )
