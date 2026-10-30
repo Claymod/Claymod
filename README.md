@@ -241,6 +241,9 @@ resources {
 The std schema is embedded in the binary: `playbook validate|plan|apply`
 work from any working directory (`CLAYMOD_SCHEMA_DIR` pins an on-disk
 copy; `--module-path`/`CLAYMOD_MODULE_PATH` add extra lookup dirs).
+Shared PKL libraries come from git repos pinned in
+`claymod.project.yaml` (managed with `claymod lib list|sync`; see
+[docs/playbooks.md](docs/playbooks.md#libraries)).
 
 Full authoring guide: [docs/playbooks.md](docs/playbooks.md). Examples
 live in [examples/](examples/).

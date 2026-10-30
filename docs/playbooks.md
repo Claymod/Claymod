@@ -168,6 +168,52 @@ Applies are **idempotent**: unchanged resources report `changed=false`,
 so a re-run is cheap and safe. Per-host rendering means `{{.Host}}` and
 per-host vars resolve per target — one playbook, many hosts.
 
+## Libraries
+
+A library is a git repo of PKL modules that many playbook repos share.
+A playbook repo pins it in `claymod.project.yaml` (discovered by
+walking up from the playbook) and imports its modules as
+`modulepath:/<name>/…`:
+
+```yaml
+# claymod.project.yaml
+version: 1
+schemaPaths: ["./schema"]        # extra local module dirs (optional)
+libraries:
+  - name: acme                   # import prefix: modulepath:/acme/…
+    git: ssh://git@git.example.com/acme/claymod-lib.git
+    ref: v1.2.0                  # pin a tag or commit (required)
+    path: pkl                    # subdir holding the modules
+  - name: acme-dev               # the develop-a-library loop:
+    path: ../claymod-lib/pkl     # a plain local dir (no git)
+```
+
+```pkl
+import "modulepath:/acme/baseline.pkl" as acme
+content = acme.motd
+```
+
+Semantics:
+
+- Git libraries sync into `CLAYMOD_CACHE_DIR` (default: the user cache
+  dir) as `libs/<name>-<urlhash>/`, with a `.claymod-lib.json` recording
+  url, ref and resolved commit. **Pinned refs (tags, commits) never
+  touch the network once cached**; branch refs re-fetch on every sync.
+  The library name `claymod` is reserved, names must be unique, and git
+  libraries must pin a ref.
+- `playbook validate|plan|apply` sync automatically on evaluate. The
+  dedicated commands are for inspection and cache warming:
+  `claymod lib list` (cache state, resolved commits) and
+  `claymod lib sync [--offline]`.
+- **Air-gapped**: run `claymod lib sync` on a connected machine, then
+  point `CLAYMOD_CACHE_DIR` at the copied cache (a directory you can
+  carry across). Offline evaluate/sync reuses a warm cache and fails
+  with a clear error on a cold one.
+- Libraries import the std (`modulepath:/claymod/std/files.pkl`) and
+  each other (`modulepath:/<other>/…`) like any playbook. The git CLI
+  is needed on the control server to sync (the same machine that
+  already needs the pkl CLI).
+
 ## Examples
 
 - [`examples/basic-setup/`](../examples/basic-setup/) — Copy + Template
