@@ -43,14 +43,30 @@ Two binaries, one per side of the wire:
 | `claymod` | control server + full CLI | ~14 MB | sqlite, pkl, wgctrl |
 | `claymod-agent` | host agent (static) | ~7 MB | stdlib + yaml only |
 
+### Dev workstation (lint playbooks, no control server)
+
+```sh
+scripts/bootstrap-claymod.sh
+```
+
+Installs the `claymod` CLI (+ `pkl` for `playbook validate|plan`) on
+Linux or macOS, checksum-verified. It never sets up or starts a control
+server — that's a separate, deliberate step. Pin with
+`CLAYMOD_VERSION=vX.Y.Z`, mirror air-gapped with `CLAYMOD_RELEASES_BASE`
++ `CLAYMOD_SHA256` (out-of-band digest), `SKIP_PKL=1` / `FORCE=1` as
+needed.
+
+### Control server / hosts
+
 Download from the [latest release](https://github.com/Claymod/Claymod/releases/latest)
-and verify against `SHA256SUMS`:
+and verify against `SHA256SUMS` (linux **and darwin** assets):
 
 ```sh
 BASE=https://github.com/Claymod/Claymod/releases/latest/download
+os=$(uname -s | tr A-Z a-z)              # linux or darwin
 arch=$(uname -m | sed s/x86_64/amd64/)   # aarch64 stays aarch64
-curl -fsSL -O $BASE/claymod-linux-$arch -O $BASE/claymod-agent-linux-$arch -O $BASE/SHA256SUMS
-sha256sum -c --ignore-missing SHA256SUMS
+curl -fsSL -O $BASE/claymod-$os-$arch -O $BASE/SHA256SUMS
+grep "  claymod-$os-$arch\$" SHA256SUMS | sha256sum -c -
 ```
 
 Building from source (developers):
