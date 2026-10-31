@@ -10,15 +10,19 @@ permissions:
 
 jobs:
   build:
-    name: ${{ matrix.binary.name }} linux/${{ matrix.platform.arch }}
+    name: ${{ matrix.binary.name }} ${{ matrix.platform.os }}/${{ matrix.platform.arch }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
         # goarch is Go's name (GOARCH=arm64); arch is the uname(1) name
-        # used in asset names and /agent/<os>/<arch> (aarch64).
+        # used in asset names and /agent/<os>/<arch> (aarch64). darwin
+        # assets exist so workstations can run the CLI to author and
+        # lint playbooks (scripts/bootstrap-claymod.sh).
         platform:
-          - { goarch: amd64, arch: amd64 }
-          - { goarch: arm64, arch: aarch64 }
+          - { os: linux, goarch: amd64, arch: amd64 }
+          - { os: linux, goarch: arm64, arch: aarch64 }
+          - { os: darwin, goarch: amd64, arch: amd64 }
+          - { os: darwin, goarch: arm64, arch: aarch64 }
         binary:
           - name: claymod
             ldvar: github.com/claymod/claymod/internal/cli.version
@@ -36,10 +40,10 @@ jobs:
       - name: Build
         env:
           CGO_ENABLED: "0"
-          GOOS: linux
+          GOOS: ${{ matrix.platform.os }}
           GOARCH: ${{ matrix.platform.goarch }}
         run: |
-          out="${{ matrix.binary.name }}-linux-${{ matrix.platform.arch }}"
+          out="${{ matrix.binary.name }}-${{ matrix.platform.os }}-${{ matrix.platform.arch }}"
           mkdir -p dist
           go build -trimpath \
             -ldflags "-s -w -X ${{ matrix.binary.ldvar }}=${GITHUB_REF_NAME}" \
@@ -49,7 +53,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.binary.name }}-linux-${{ matrix.platform.arch }}
+          name: ${{ matrix.binary.name }}-${{ matrix.platform.os }}-${{ matrix.platform.arch }}
           path: dist/*
           if-no-files-found: error
 
@@ -66,7 +70,7 @@ jobs:
 
       - name: Generate checksums
         working-directory: dist
-        run: sha256sum claymod-linux-* claymod-agent-linux-* | tee SHA256SUMS
+        run: sha256sum claymod-linux-* claymod-darwin-* claymod-agent-linux-* claymod-agent-darwin-* | tee SHA256SUMS
 
       - name: Create GitHub release
         env:

@@ -40,7 +40,7 @@ agents:
 # (the format the README install instructions verify against).
 release:
 	@mkdir -p dist
-	@for pair in linux/amd64 linux/arm64 darwin/arm64; do \
+	@for pair in linux/amd64 linux/arm64 darwin/arm64 darwin/amd64; do \
 		os=$${pair%%/*}; goarch=$${pair##*/}; \
 		arch=$$(echo $$goarch | sed 's/arm64/aarch64/'); \
 		CGO_ENABLED=0 GOOS=$$os GOARCH=$$goarch $(GO) build -trimpath \

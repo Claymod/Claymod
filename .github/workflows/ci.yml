@@ -27,3 +27,28 @@ jobs:
           go test ./internal/proto/ -fuzz FuzzHandshakeDecode -fuzztime 30s -run '^$'
       - name: Build both binaries
         run: make build agent
+
+  # The CLI is a dev tool too (playbook authoring and linting on
+  # workstations): keep darwin compiling and passing the same gates.
+  test-macos:
+    name: test (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: Install pkl (full playbook test coverage)
+        run: ./scripts/bootstrap-pkl.sh
+      - name: Format
+        run: test -z "$(gofmt -l cmd internal)" || (gofmt -l cmd internal && exit 1)
+      - name: Vet
+        run: go vet ./...
+      - name: Test (race)
+        run: go test -race ./...
+      - name: Fuzz smoke (frame codec + handshake)
+        run: |
+          go test ./internal/proto/ -fuzz FuzzReadFrame -fuzztime 30s -run '^$'
+          go test ./internal/proto/ -fuzz FuzzHandshakeDecode -fuzztime 30s -run '^$'
+      - name: Build both binaries
+        run: make build agent
