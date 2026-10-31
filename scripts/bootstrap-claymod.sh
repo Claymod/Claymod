@@ -78,34 +78,40 @@ dir="$CACHE/$version"
 mkdir -p "$dir"
 work="$dir/$asset"
 
+# A cached binary is NEVER trusted blindly: an interrupted prior run
+# (curl keeps partial output) or a planted file at the predictable
+# cache path must not reach `cp`/`sudo cp`. Verification runs on every
+# invocation; only the big binary download is skipped on a cache hit.
 if [ ! -f "$work" ]; then
   echo "downloading $base/$asset ..."
   # Download under the real asset name: `sha256sum -c` matches the file
   # name recorded in SHA256SUMS.
   curl -fsSL -o "$work" "$base/$asset"
+fi
+if [ ! -f "$work" ] || [ ! -f "$dir/SHA256SUMS" ] || [ "$work" -nt "$dir/SHA256SUMS" ]; then
   curl -fsSL -o "$dir/SHA256SUMS" "$base/SHA256SUMS"
-  line="$(grep "  $asset\$" "$dir/SHA256SUMS" || true)"
-  if [ -z "$line" ]; then
+fi
+line="$(grep "  $asset\$" "$dir/SHA256SUMS" || true)"
+if [ -z "$line" ]; then
+  rm -f "$work"
+  echo "error: $asset is not listed in SHA256SUMS (asset naming changed?)" >&2
+  exit 1
+fi
+if ! printf '%s\n' "$line" | (cd "$dir" && { sha256sum -c - >/dev/null 2>&1 || shasum -a 256 -c - >/dev/null 2>&1; }); then
+  rm -f "$work"
+  echo "error: checksum verification FAILED for $asset (do not use this binary)" >&2
+  exit 1
+fi
+# SHA256SUMS travels the same channel as the binary: it proves transfer
+# integrity, not authenticity. For an out-of-band anchor (mirrors,
+# air-gapped), set CLAYMOD_SHA256 to the digest from a trusted source —
+# the install aborts on any mismatch. Checked on every run.
+if [ -n "${CLAYMOD_SHA256:-}" ]; then
+  got="$((sha256sum "$work" 2>/dev/null || shasum -a 256 "$work") | cut -d' ' -f1)"
+  if [ "$got" != "$(echo "$CLAYMOD_SHA256" | tr 'A-Z' 'a-z')" ]; then
     rm -f "$work"
-    echo "error: $asset is not listed in SHA256SUMS (asset naming changed?)" >&2
+    echo "error: CLAYMOD_SHA256 mismatch (got ${got:-none}) — do not use this binary" >&2
     exit 1
-  fi
-  if ! printf '%s\n' "$line" | (cd "$dir" && { sha256sum -c - >/dev/null 2>&1 || shasum -a 256 -c - >/dev/null 2>&1; }); then
-    rm -f "$work"
-    echo "error: checksum verification FAILED for $asset (do not use this binary)" >&2
-    exit 1
-  fi
-  # SHA256SUMS travels the same channel as the binary: it proves
-  # transfer integrity, not authenticity. For an out-of-band anchor
-  # (mirrors, air-gapped), set CLAYMOD_SHA256 to the digest from a
-  # trusted source — the install aborts on any mismatch.
-  if [ -n "${CLAYMOD_SHA256:-}" ]; then
-    got="$((sha256sum "$work" 2>/dev/null || shasum -a 256 "$work") | cut -d' ' -f1)"
-    if [ "$got" != "$(echo "$CLAYMOD_SHA256" | tr 'A-Z' 'a-z')" ]; then
-      rm -f "$work"
-      echo "error: CLAYMOD_SHA256 mismatch (got ${got:-none}) — do not use this binary" >&2
-      exit 1
-    fi
   fi
 fi
 

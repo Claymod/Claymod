@@ -63,10 +63,12 @@ and verify against `SHA256SUMS` (linux **and darwin** assets):
 
 ```sh
 BASE=https://github.com/Claymod/Claymod/releases/latest/download
-os=$(uname -s | tr A-Z a-z)              # linux or darwin
-arch=$(uname -m | sed s/x86_64/amd64/)   # aarch64 stays aarch64
+os=$(uname -s | tr A-Z a-z)   # linux or darwin
+# uname prints arm64 on Apple Silicon; assets are named aarch64.
+arch=$(uname -m | sed -e s/x86_64/amd64/ -e s/arm64/aarch64/)
 curl -fsSL -O $BASE/claymod-$os-$arch -O $BASE/SHA256SUMS
-grep "  claymod-$os-$arch\$" SHA256SUMS | sha256sum -c -
+# macOS ships shasum, not sha256sum.
+grep "  claymod-$os-$arch\$" SHA256SUMS | (sha256sum -c - 2>/dev/null || shasum -a 256 -c -)
 ```
 
 Building from source (developers):
