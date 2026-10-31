@@ -3,18 +3,27 @@
 #
 # The PKL evaluation happens ONLY on the control server: playbooks compile
 # server-side to primitive ops, so agents never need the pkl binary.
-# This script fetches the official native binary from apple/pkl releases
-# and installs it to /usr/local/bin (or $PREFIX/bin).
+# This script fetches the official native binary from apple/pkl releases.
+#
+# Default install location: the user's own bin directory (~/.local/bin —
+# same convention on Linux and macOS), so no sudo is needed. When run as
+# root (the server setup flow), the default is /usr/local/bin instead;
+# PREFIX overrides either way.
 #
 # Usage:
-#   sudo scripts/bootstrap-pkl.sh              # installs latest release
+#   scripts/bootstrap-pkl.sh                   # latest release, user-local
+#   sudo scripts/bootstrap-pkl.sh              # root: /usr/local/bin
 #   PKL_VERSION=0.32.2 scripts/bootstrap-pkl.sh # pin a release
-#   PREFIX="$HOME/.local" scripts/bootstrap-pkl.sh # user-local install
+#   PREFIX="$HOME/.local" scripts/bootstrap-pkl.sh # explicit location
 #
 # Already have pkl? This exits 0 immediately.
 set -eu
 
-PREFIX="${PREFIX:-/usr/local}"
+if [ "$(id -u)" = "0" ]; then
+  PREFIX="${PREFIX:-/usr/local}"
+else
+  PREFIX="${PREFIX:-$HOME/.local}"
+fi
 DEST="$PREFIX/bin"
 CACHE="${TMPDIR:-/tmp}/pkl-bootstrap"
 
@@ -85,6 +94,15 @@ else
   echo "(write access to $DEST required, retrying with sudo)"
   sudo cp "$work" "$DEST/pkl"
 fi
+case ":$PATH:" in
+  *":$DEST:"*) ;;
+  *)
+    rc="$HOME/.profile"
+    case "${SHELL:-}" in *zsh*) rc="$HOME/.zshrc" ;; esac
+    echo "note: $DEST is not on your PATH — add it, e.g.:"
+    echo "  echo 'export PATH=\"$DEST:\$PATH\"' >> $rc && source $rc"
+    ;;
+esac
 
 echo "installed: $("$DEST/pkl" --version)"
 echo "done. claymod's control server will find pkl on PATH."

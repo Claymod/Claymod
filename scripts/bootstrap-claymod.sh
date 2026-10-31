@@ -11,9 +11,13 @@
 # Usage:
 #   scripts/bootstrap-claymod.sh                  # latest release
 #   CLAYMOD_VERSION=v1.2.3 scripts/bootstrap-claymod.sh   # pin a release
-#   PREFIX="$HOME/.local" scripts/bootstrap-claymod.sh    # user-local
 #   SKIP_PKL=1 scripts/bootstrap-claymod.sh       # CLI only, no pkl
 #   FORCE=1 scripts/bootstrap-claymod.sh          # reinstall/upgrade
+#
+# Default install location: the user's own bin directory (~/.local/bin —
+# same convention on Linux and macOS), so no sudo is needed. When run as
+# root (a server setup flow), the default is /usr/local/bin instead;
+# PREFIX overrides either way.
 #
 # Air-gapped / mirrored: set CLAYMOD_RELEASES_BASE to a mirror of
 # https://github.com/<repo>/releases/download (plus CLAYMOD_VERSION —
@@ -25,7 +29,11 @@
 set -eu
 
 REPO="${CLAYMOD_REPO:-Claymod/Claymod}"
-PREFIX="${PREFIX:-/usr/local}"
+if [ "$(id -u)" = "0" ]; then
+  PREFIX="${PREFIX:-/usr/local}"
+else
+  PREFIX="${PREFIX:-$HOME/.local}"
+fi
 DEST="$PREFIX/bin"
 CACHE="${TMPDIR:-/tmp}/claymod-bootstrap"
 
@@ -137,6 +145,16 @@ else
   echo "note: pkl is not installed and bootstrap-pkl.sh was not found next to this script." >&2
   echo "      install pkl (scripts/bootstrap-pkl.sh) — playbook validate/plan need it." >&2
 fi
+
+case ":$PATH:" in
+  *":$DEST:"*) ;;
+  *)
+    rc="$HOME/.profile"
+    case "${SHELL:-}" in *zsh*) rc="$HOME/.zshrc" ;; esac
+    echo "note: $DEST is not on your PATH — add it, e.g.:"
+    echo "  echo 'export PATH=\"$DEST:\$PATH\"' >> $rc && source $rc"
+    ;;
+esac
 
 echo "installed: $("$DEST/claymod" version)"
 cat <<EOF

@@ -50,11 +50,16 @@ scripts/bootstrap-claymod.sh
 ```
 
 Installs the `claymod` CLI (+ `pkl` for `playbook validate|plan`) on
-Linux or macOS, checksum-verified. It never sets up or starts a control
-server — that's a separate, deliberate step. Pin with
-`CLAYMOD_VERSION=vX.Y.Z`, mirror air-gapped with `CLAYMOD_RELEASES_BASE`
-+ `CLAYMOD_SHA256` (out-of-band digest), `SKIP_PKL=1` / `FORCE=1` as
-needed.
+Linux or macOS, checksum-verified, **user-local by default**:
+`~/.local/bin` on both (no sudo; the script prints the PATH line to add
+when the directory isn't on `PATH`). Run as root and it defaults to
+`/usr/local/bin` instead — the server setup flow; `PREFIX` overrides
+either way. It never sets up or starts a control server — that's a
+separate, deliberate step. The PKL std schema itself needs no install:
+it is embedded in the binary and materialized into the user cache on
+first run. Pin with `CLAYMOD_VERSION=vX.Y.Z`, mirror air-gapped with
+`CLAYMOD_RELEASES_BASE` + `CLAYMOD_SHA256` (out-of-band digest),
+`SKIP_PKL=1` / `FORCE=1` as needed.
 
 ### Control server / hosts
 
