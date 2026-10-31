@@ -12,7 +12,14 @@
 #   scripts/bootstrap-claymod.sh                  # latest release
 #   CLAYMOD_VERSION=v1.2.3 scripts/bootstrap-claymod.sh   # pin a release
 #   SKIP_PKL=1 scripts/bootstrap-claymod.sh       # CLI only, no pkl
+#   INSTALL_PKL=1 scripts/bootstrap-claymod.sh    # install pkl without prompting
 #   FORCE=1 scripts/bootstrap-claymod.sh          # reinstall/upgrade
+#
+# pkl: this script is self-contained (it ships alone, e.g. via curl | sh),
+# so the pkl installer is embedded below — no sibling bootstrap-pkl.sh
+# needed. When pkl is missing the script ASKS before installing
+# (INSTALL_PKL=1 pre-answers yes; SKIP_PKL=1 skips entirely; without a
+# terminal it prints a note instead of asking).
 #
 # Default install location: the user's own bin directory (~/.local/bin —
 # same convention on Linux and macOS), so no sudo is needed. When run as
@@ -42,6 +49,80 @@ if [ -z "${FORCE:-}" ] && command -v claymod >/dev/null 2>&1; then
   echo "(set FORCE=1 to reinstall or upgrade)"
   exit 0
 fi
+
+# --- helpers ------------------------------------------------------------
+# path_hint prints an export line when dir is not on PATH.
+path_hint() {
+  case ":$PATH:" in
+    *":$1:"*) return 0 ;;
+  esac
+  rc="$HOME/.profile"
+  case "${SHELL:-}" in *zsh*) rc="$HOME/.zshrc" ;; esac
+  echo "note: $1 is not on your PATH — add it, e.g.:"
+  echo "  echo 'export PATH=\"$1:\$PATH\"' >> $rc && source $rc"
+}
+
+# install_pkl is the embedded bootstrap-pkl.sh logic, kept in sync with
+# scripts/bootstrap-pkl.sh (same resolution, same redirect-not-API
+# lesson). It installs into the same DEST as claymod.
+install_pkl() {
+  pkl_os="$(uname -s)"
+  case "$pkl_os" in
+    Linux)  pkl_os_name="linux" ;;
+    Darwin) pkl_os_name="macos" ;;
+    *)
+      echo "error: unsupported OS '$pkl_os'. Install pkl manually from https://pkl-lang.org" >&2
+      return 1
+      ;;
+  esac
+  pkl_arch="$(uname -m)"
+  case "$pkl_arch" in
+    x86_64|amd64)  pkl_arch_name="amd64" ;;
+    arm64|aarch64) pkl_arch_name="aarch64" ;;
+    *)
+      echo "error: unsupported architecture '$pkl_arch'" >&2
+      return 1
+      ;;
+  esac
+  pkl_asset="pkl-${pkl_os_name}-${pkl_arch_name}"
+
+  if [ -n "${PKL_VERSION:-}" ]; then
+    pkl_version="$PKL_VERSION"
+  else
+    echo "resolving latest pkl release..."
+    pkl_version="$(curl -fsSLI -o /dev/null -w '%{url_effective}' \
+      https://github.com/apple/pkl/releases/latest 2>/dev/null | sed -n 's|.*/tag/||p' || true)"
+    if [ -z "$pkl_version" ]; then
+      echo "(redirect resolution failed, falling back to the GitHub API...)"
+      pkl_version="$(curl -fsSL https://api.github.com/repos/apple/pkl/releases/latest 2>/dev/null \
+        | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n1 || true)"
+    fi
+    if [ -z "$pkl_version" ]; then
+      echo "error: could not resolve latest pkl version (set PKL_VERSION=x.y.z)" >&2
+      return 1
+    fi
+  fi
+
+  pkl_url="https://github.com/apple/pkl/releases/download/${pkl_version}/${pkl_asset}"
+  mkdir -p "$CACHE"
+  pkl_work="$CACHE/pkl-$pkl_asset-$pkl_version"
+  if [ ! -f "$pkl_work" ]; then
+    echo "downloading $pkl_url ..."
+    curl -fsSL -o "$pkl_work.tmp" "$pkl_url"
+    mv "$pkl_work.tmp" "$pkl_work"
+  fi
+
+  echo "pkl $pkl_version ($pkl_asset) -> $DEST/pkl"
+  mkdir -p "$DEST"
+  chmod 0755 "$pkl_work"
+  if [ -w "$DEST" ]; then
+    cp "$pkl_work" "$DEST/pkl"
+  else
+    echo "(write access to $DEST required, retrying with sudo)"
+    sudo cp "$pkl_work" "$DEST/pkl"
+  fi
+  echo "installed pkl: $("$DEST/pkl" --version)"
+}
 
 # --- resolve platform (uname names, matching the release assets) ------
 os="$(uname -s)"
@@ -135,26 +216,39 @@ else
 fi
 
 # --- pkl (playbook validate/plan = the linting this setup is for) ------
+# The installer is embedded below: this script ships alone (curl | sh)
+# and cannot rely on bootstrap-pkl.sh sitting next to it. When pkl is
+# missing, ASK before downloading (INSTALL_PKL=1 pre-answers yes;
+# SKIP_PKL=1 skips; without a terminal, print a note instead of asking).
+pkl_missing_action() {
+  if [ "${INSTALL_PKL:-}" != "1" ]; then
+    if ! [ -r /dev/tty ]; then
+      echo "note: pkl not installed — 'claymod playbook validate/plan' need it." >&2
+      echo "      install with scripts/bootstrap-pkl.sh, or re-run with INSTALL_PKL=1." >&2
+      return 0
+    fi
+    printf "pkl is not installed (needed for 'claymod playbook validate/plan'). Install it now? [Y/n] "
+    answer=""
+    read -r answer < /dev/tty 2>/dev/null || answer="n"
+    case "$answer" in
+      n*|N*)
+        echo "skipped pkl — install later with scripts/bootstrap-pkl.sh."
+        return 0
+        ;;
+    esac
+  fi
+  install_pkl
+}
+
 if [ "${SKIP_PKL:-}" = "1" ]; then
   echo "SKIP_PKL=1: pkl not installed (claymod playbook validate/plan need it)"
 elif command -v pkl >/dev/null 2>&1; then
   echo "pkl already installed: $(command -v pkl)"
-elif [ -f "$(dirname "$0")/bootstrap-pkl.sh" ]; then
-  "$(dirname "$0")/bootstrap-pkl.sh"
 else
-  echo "note: pkl is not installed and bootstrap-pkl.sh was not found next to this script." >&2
-  echo "      install pkl (scripts/bootstrap-pkl.sh) — playbook validate/plan need it." >&2
+  pkl_missing_action
 fi
 
-case ":$PATH:" in
-  *":$DEST:"*) ;;
-  *)
-    rc="$HOME/.profile"
-    case "${SHELL:-}" in *zsh*) rc="$HOME/.zshrc" ;; esac
-    echo "note: $DEST is not on your PATH — add it, e.g.:"
-    echo "  echo 'export PATH=\"$DEST:\$PATH\"' >> $rc && source $rc"
-    ;;
-esac
+path_hint "$DEST"
 
 echo "installed: $("$DEST/claymod" version)"
 cat <<EOF
