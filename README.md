@@ -57,7 +57,13 @@ when the directory isn't on `PATH`). Run as root and it defaults to
 either way. It never sets up or starts a control server — that's a
 separate, deliberate step. The PKL std schema itself needs no install:
 it is embedded in the binary and materialized into the user cache on
-first run. Pin with `CLAYMOD_VERSION=vX.Y.Z`, mirror air-gapped with
+first run.
+
+The pkl installer is **embedded in the script** — it ships standalone
+(`curl … | sh` works, no sibling file). If pkl is missing it asks
+before downloading; `INSTALL_PKL=1` pre-answers yes, `SKIP_PKL=1`
+skips entirely. Pin with `CLAYMOD_VERSION=vX.Y.Z` (`PKL_VERSION` for
+pkl), mirror air-gapped with
 `CLAYMOD_RELEASES_BASE` + `CLAYMOD_SHA256` (out-of-band digest),
 `SKIP_PKL=1` / `FORCE=1` as needed.
 
