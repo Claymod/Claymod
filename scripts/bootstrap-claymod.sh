@@ -13,6 +13,7 @@
 #   CLAYMOD_VERSION=v1.2.3 scripts/bootstrap-claymod.sh   # pin a release
 #   SKIP_PKL=1 scripts/bootstrap-claymod.sh       # CLI only, no pkl
 #   INSTALL_PKL=1 scripts/bootstrap-claymod.sh    # install pkl without prompting
+#   PKL_SHA256=<digest> scripts/bootstrap-claymod.sh # pkl trust anchor
 #   FORCE=1 scripts/bootstrap-claymod.sh          # reinstall/upgrade
 #
 # pkl: this script is self-contained (it ships alone, e.g. via curl | sh),
@@ -51,6 +52,20 @@ if [ -z "${FORCE:-}" ] && command -v claymod >/dev/null 2>&1; then
 fi
 
 # --- helpers ------------------------------------------------------------
+# digest_of prints the lowercase sha-256 of file $1 (sha256sum on Linux,
+# shasum -a 256 on macOS).
+digest_of() {
+  (sha256sum "$1" 2>/dev/null || shasum -a 256 "$1") | cut -d' ' -f1
+}
+
+# verify_digest fails when the digest of file $1 differs from $2
+# (case-insensitive, whitespace-tolerant; fails on an empty expected).
+verify_digest() {
+  want="$(echo "$2" | tr 'A-Z' 'a-z' | tr -d '[:space:]')"
+  [ -n "$want" ] || return 1
+  [ "$(digest_of "$1")" = "$want" ]
+}
+
 # path_hint prints an export line when dir is not on PATH.
 path_hint() {
   case ":$PATH:" in
@@ -106,10 +121,32 @@ install_pkl() {
   pkl_url="https://github.com/apple/pkl/releases/download/${pkl_version}/${pkl_asset}"
   mkdir -p "$CACHE"
   pkl_work="$CACHE/pkl-$pkl_asset-$pkl_version"
+  pkl_sidecar="$pkl_work.sha256"
   if [ ! -f "$pkl_work" ]; then
     echo "downloading $pkl_url ..."
     curl -fsSL -o "$pkl_work.tmp" "$pkl_url"
     mv "$pkl_work.tmp" "$pkl_work"
+    # Record the digest at download time: apple/pkl publishes no
+    # SHA256SUMS asset, so the sidecar gives cache hits a transfer-
+    # integrity check (re-verified on every run below).
+    digest_of "$pkl_work" > "$pkl_sidecar"
+  fi
+
+  # NEVER trust the predictable cache path: verify before installing,
+  # on every run. The sidecar catches truncation/corruption; for
+  # authenticity set PKL_SHA256 to a digest from a trusted source
+  # (out-of-band anchor) — any mismatch aborts and removes the file.
+  if ! verify_digest "$pkl_work" "$(cat "$pkl_sidecar" 2>/dev/null)"; then
+    rm -f "$pkl_work" "$pkl_sidecar"
+    echo "error: pkl binary in the cache failed verification — removed, re-run to download again" >&2
+    return 1
+  fi
+  if [ -n "${PKL_SHA256:-}" ]; then
+    if ! verify_digest "$pkl_work" "$PKL_SHA256"; then
+      rm -f "$pkl_work" "$pkl_sidecar"
+      echo "error: PKL_SHA256 mismatch — do not use this binary" >&2
+      return 1
+    fi
   fi
 
   echo "pkl $pkl_version ($pkl_asset) -> $DEST/pkl"
@@ -196,10 +233,9 @@ fi
 # air-gapped), set CLAYMOD_SHA256 to the digest from a trusted source —
 # the install aborts on any mismatch. Checked on every run.
 if [ -n "${CLAYMOD_SHA256:-}" ]; then
-  got="$((sha256sum "$work" 2>/dev/null || shasum -a 256 "$work") | cut -d' ' -f1)"
-  if [ "$got" != "$(echo "$CLAYMOD_SHA256" | tr 'A-Z' 'a-z')" ]; then
+  if ! verify_digest "$work" "$CLAYMOD_SHA256"; then
     rm -f "$work"
-    echo "error: CLAYMOD_SHA256 mismatch (got ${got:-none}) — do not use this binary" >&2
+    echo "error: CLAYMOD_SHA256 mismatch (got $(digest_of "$work" 2>/dev/null || echo none)) — do not use this binary" >&2
     exit 1
   fi
 fi

@@ -14,6 +14,7 @@
 #   scripts/bootstrap-pkl.sh                   # latest release, user-local
 #   sudo scripts/bootstrap-pkl.sh              # root: /usr/local/bin
 #   PKL_VERSION=0.32.2 scripts/bootstrap-pkl.sh # pin a release
+#   PKL_SHA256=<digest> scripts/bootstrap-pkl.sh # out-of-band trust anchor
 #   PREFIX="$HOME/.local" scripts/bootstrap-pkl.sh # explicit location
 #
 # Already have pkl? This exits 0 immediately.
@@ -75,14 +76,50 @@ else
   fi
 fi
 
+# --- helpers ------------------------------------------------------------
+# digest_of prints the lowercase sha-256 of file $1 (sha256sum on Linux,
+# shasum -a 256 on macOS).
+digest_of() {
+  (sha256sum "$1" 2>/dev/null || shasum -a 256 "$1") | cut -d' ' -f1
+}
+
+# verify_digest fails when the digest of file $1 differs from $2
+# (case-insensitive, whitespace-tolerant; fails on an empty expected).
+verify_digest() {
+  want="$(echo "$2" | tr 'A-Z' 'a-z' | tr -d '[:space:]')"
+  [ -n "$want" ] || return 1
+  [ "$(digest_of "$1")" = "$want" ]
+}
+
 # --- download and verify ----------------------------------------------------
 url="https://github.com/apple/pkl/releases/download/${version}/${asset}"
 mkdir -p "$CACHE"
 work="$CACHE/$asset-$version"
+sidecar="$work.sha256"
 if [ ! -f "$work" ]; then
   echo "downloading $url ..."
   curl -fsSL -o "$work.tmp" "$url"
   mv "$work.tmp" "$work"
+  # apple/pkl publishes no SHA256SUMS asset: the sidecar records the
+  # digest at download time, giving cache hits a transfer-integrity
+  # check (re-verified on every run below).
+  digest_of "$work" > "$sidecar"
+fi
+
+# NEVER trust the predictable cache path: verify before installing, on
+# every run. For authenticity set PKL_SHA256 to a digest from a trusted
+# source (out-of-band anchor) — any mismatch aborts and removes the file.
+if ! verify_digest "$work" "$(cat "$sidecar" 2>/dev/null)"; then
+  rm -f "$work" "$sidecar"
+  echo "error: pkl binary in the cache failed verification — removed, re-run to download again" >&2
+  exit 1
+fi
+if [ -n "${PKL_SHA256:-}" ]; then
+  if ! verify_digest "$work" "$PKL_SHA256"; then
+    rm -f "$work" "$sidecar"
+    echo "error: PKL_SHA256 mismatch — do not use this binary" >&2
+    exit 1
+  fi
 fi
 
 echo "pkl $version ($asset) -> $DEST/pkl"
