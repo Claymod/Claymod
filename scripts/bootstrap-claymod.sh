@@ -234,8 +234,9 @@ fi
 # the install aborts on any mismatch. Checked on every run.
 if [ -n "${CLAYMOD_SHA256:-}" ]; then
   if ! verify_digest "$work" "$CLAYMOD_SHA256"; then
+    got="$(digest_of "$work" 2>/dev/null || true)"
     rm -f "$work"
-    echo "error: CLAYMOD_SHA256 mismatch (got $(digest_of "$work" 2>/dev/null || echo none)) — do not use this binary" >&2
+    echo "error: CLAYMOD_SHA256 mismatch (got ${got:-none}) — do not use this binary" >&2
     exit 1
   fi
 fi
