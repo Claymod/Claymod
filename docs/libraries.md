@@ -17,7 +17,7 @@ maintains them, and what each one is allowed to be responsible for.
 |---|---|---|
 | Nature | primitive, distro-agnostic | opinionated, distro-aware |
 | Change rate | rare, with the binary | independent, semver tags |
-| Examples | `files`, `commands`, `service`, `sysctl`, `cron`, `assert`, `users` | `pkg`, `systemd`, `baseline`, app installers |
+| Examples | `files`, `commands`, `service`, `sysctl`, `cron`, `assert`, `users` | `pkg`, `systemd`, `baseline`, `firewall`, app installers |
 
 Rule of thumb: **the std holds what every Unix has** (a file, a process,
 a user, a listening port). A library holds what depends on *which*
@@ -49,6 +49,7 @@ do not pin it yet; **published** = usable now.
 | [claymod-libs-pkg](#claymod-libs-pkg) | planned | `pkg` | Package management and repository setup | Emits `dpkg-query`/`rpm`/`apk` — the definition of distro-specific |
 | [claymod-libs-systemd](#claymod-libs-systemd) | planned | `systemd` | Unit and timer *files* (`/etc/systemd/system`) | `std.service` manages unit state; unit files are systemd-specific |
 | [claymod-libs-baseline](#claymod-libs-baseline) | planned | `baseline` | New-server checklist composites | Composes std resources; opinionated by design |
+| [claymod-libs-firewall](#claymod-libs-firewall) | planned | `firewall` | Backend-agnostic network rules → nftables, iptables or pf | No packet filter is universal — syntax, table names and persistence differ per backend |
 
 ### Tier 2 — next
 
@@ -124,6 +125,82 @@ unattended-upgrades toggle, a standard `/etc/motd` banner. Every
 component is overridable; the library is a starting point, not a policy
 engine. Composes `std.files`, `std.sysctl`, `std.cron`, `std.assert`.
 
+### claymod-libs-firewall
+
+One rule set, any backend. You declare *what traffic is allowed*, not
+which tool enforces it; the library compiles the same declarations to
+nftables on modern Linux, iptables-legacy where `nft` is absent, and pf
+on macOS.
+
+```pkl
+// pkl/firewall/firewall.pkl — the module file name is the import prefix,
+// as with the std (files.pkl → files.Copy)
+import "modulepath:/firewall/firewall.pkl"
+
+new firewall.Policy {
+  name = "default"
+  input = "drop"          // accept | drop | reject
+  forward = "drop"
+  output = "accept"
+  manage = true           // own the ruleset; false = add rules, delete nothing
+  adminPort = 22          // never locked out on this port
+}
+
+new firewall.Rule {
+  name = "ssh"
+  direction = "in"
+  proto = "tcp"
+  port = 22
+  source = "10.0.0.0/8"   // "2001:db8::/32" works in the same field
+  action = "accept"
+}
+
+new firewall.Rule {
+  name = "http"
+  direction = "in"
+  proto = "tcp"
+  port = 80
+  action = "accept"
+}
+```
+
+Planned resources: `firewall.Policy` (default verdicts per direction,
+ruleset ownership, reboot persistence, the admin port), `firewall.Rule`
+(action, direction, protocol, single port or range, source/destination
+CIDR, interface; ordered by an explicit `order`, then by resource name),
+`firewall.Set` (a named address/port set rules reference — an nftables
+set, `ipset` on the legacy backend), `firewall.Nat` (SNAT/DNAT and
+forwarding, its own resource because NAT is a routing decision, not a
+filter rule).
+
+Backends detected at run time: nftables (`nft`), iptables-legacy
+(`iptables`/`ip6tables`), pf (`pfctl`, macOS). If a distro manager owns
+the ruleset — `firewalld` active, or `ufw` enabled — the library fails
+closed with a clear stderr instead of writing rules that manager
+overwrites on its next reload.
+
+Semantics:
+
+- **One atomic apply.** The compiled ruleset is written as a file and
+  loaded in a single transaction (`nft -c -f` to validate, then
+  `nft -f`), never rule-by-rule commands, so there is no window where
+  the host is half-filtered. Both are ordinary command ops, visible
+  under `playbook apply --verbose`.
+- **Idempotent by construction.** The ruleset file is a
+  `std.files.Content` resource: an unchanged rule set reports
+  `changed=false` and the reload is guarded (`unlessIf` on the file) so
+  it does not run either.
+- **Lockout guard.** Raising `input` to `drop`/`reject` refuses to
+  render unless the applied ruleset admits the control channel (agent
+  port `2323/tcp`, WireGuard `51821/udp`) and `adminPort`; a validation
+  failure leaves the previous ruleset in place. Losing access to a host
+  is the one failure this library must not have.
+- **Persistent by default.** With `manage = true` it also survives a
+  reboot — nftables' own config plus `nftables.service`, or
+  `netfilter-persistent` on the iptables backend.
+- **IPv4 and IPv6 from one declaration.** Rules render into a single
+  `inet` family table on nftables; the legacy backend emits the pair.
+
 ## Why the org does not own app configuration
 
 Docker Official Images work because an image is an **immutable
@@ -137,8 +214,8 @@ playbook that always fits the user's needs better.
 
 So the org maintains:
 
-1. **Infrastructure** — `pkg`, `systemd`, `baseline`: stable API, reused
-   by nearly every playbook.
+1. **Infrastructure** — `pkg`, `systemd`, `baseline`, `firewall`: stable
+   API, reused by nearly every playbook.
 2. **The installation layer** of popular apps — repos, keys, pinned
    versions, unit enabled: high churn, distro-specific, no glory.
 3. **Trusted examples** — reference compositions (nginx site, reverse
