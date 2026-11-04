@@ -1,0 +1,50 @@
+# server.yaml — default configuration baked into the claymod Docker image
+# at /etc/claymod/server.yaml (see ../../Dockerfile).
+#
+# `claymod serve` reads it on startup. Mount your own file over it, or pass
+# --config <path> and any explicitly set flag as an override:
+#
+#   docker run … claymod serve --config /etc/claymod/server.yaml \
+#     --wg-endpoint 203.0.113.10:51821
+#
+# MUST SET: wg_endpoint. Agents are told to dial this address, so it has to
+# be the control server's public IP/DNS (with :51821 or your wg_port).
+# 127.0.0.1 is only right for a loopback demo. The compose example passes it
+# as --wg-endpoint "${CLAYMOD_WG_ENDPOINT}".
+
+# HTTPS enrollment endpoint (agents and operators reach this).
+bootstrap_listen: ":8443"
+
+# CN/SAN on the bootstrap server certificate; agents pin it at enrollment.
+server_name: claymod
+
+# Single persistent volume: CA, identities, inventory DB, WireGuard keys,
+# agent binaries and caches all live below this.
+data_dir: /var/lib/claymod
+
+# Agent binaries offered at /agent/{os}/{arch} (built into the image).
+agent_bin_dir: /var/lib/claymod/agents
+
+# WireGuard overlay: the control server takes the first address (.1),
+# hosts get the following ones.
+agent_network: 10.42.0.0/24
+agent_port: 2323
+
+# WireGuard overlay. Deliberately not 51820, so claymod never collides with
+# an existing WireGuard setup.
+wg_interface: claymod0
+wg_endpoint: 127.0.0.1:51821
+wg_port: 51821
+
+# wgctrl drives the real interface: needs NET_ADMIN (--cap-add NET_ADMIN).
+# `fake` skips interface management entirely (demos, CI, no capabilities).
+wg_backend: wgctrl
+
+# Let serve create/refresh the interface at startup.
+manage_interface: true
+
+# debug|info|warn|error
+log_level: info
+
+# Reserved for the internal control API (not opened yet).
+listen: 127.0.0.1:8444

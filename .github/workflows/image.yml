@@ -1,0 +1,127 @@
+name: image
+
+# Builds the control-server container image, smoke-tests it with the same
+# script a workstation runs, and publishes it to GHCR on main and on tags.
+#
+#   ghcr.io/<owner>/<repo>:latest      default branch
+#   ghcr.io/<owner>/<repo>:<branch>    branch pushes
+#   ghcr.io/<owner>/<repo>:<version>   semver tags (v1.2.3 -> 1.2.3, 1.2)
+#   ghcr.io/<owner>/<repo>:sha-<sha>   every non-PR build
+#
+# Pull requests build and test the image but never push it.
+
+on:
+  push:
+    branches: [main]
+    tags: ["*"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build + smoke test (linux/amd64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Compute version
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            echo "VERSION=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
+          else
+            echo "VERSION=${GITHUB_SHA::12}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: claymod:ci
+          build-args: |
+            VERSION=${{ env.VERSION }}
+          cache-from: type=gha,scope=claymod-image-amd64
+          cache-to: type=gha,mode=max,scope=claymod-image-amd64
+
+      # Same script as `scripts/test-docker-image.sh` on a workstation:
+      # binaries, pkl, baked agents, /healthz, served agent + sha256,
+      # /enroll.sh, graceful shutdown, real WireGuard, compose example.
+      - name: Smoke test
+        env:
+          IMAGE: claymod:ci
+          NO_BUILD: "1"
+        run: ./scripts/test-docker-image.sh
+
+  publish:
+    name: publish (linux/amd64, linux/arm64)
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Resolve image name
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
+      - name: Compute version
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            echo "VERSION=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
+          else
+            echo "VERSION=${GITHUB_SHA::12}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=long
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ env.VERSION }}
+          cache-from: |
+            type=gha,scope=claymod-image-multiarch
+            type=gha,scope=claymod-image-amd64
+          cache-to: type=gha,mode=max,scope=claymod-image-multiarch

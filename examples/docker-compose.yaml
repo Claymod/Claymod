@@ -1,0 +1,58 @@
+# claymod control server — Docker Compose example.
+#
+#   1. export CLAYMOD_WG_ENDPOINT=<public-ip>:51821
+#   2. docker compose -f examples/docker-compose.yaml up -d
+#   3. docker compose -f examples/docker-compose.yaml logs -f claymod
+#
+# The WireGuard overlay lives inside the container's network namespace, so
+# run operator commands through the container:
+#
+#   docker compose -f examples/docker-compose.yaml exec claymod claymod \
+#     host token web01 --config /etc/claymod/server.yaml
+#
+# `exec` bypasses the image ENTRYPOINT, hence the binary name repeated.
+#
+# Full walkthrough, configuration and troubleshooting: docs/docker.md.
+
+name: claymod
+
+services:
+  claymod:
+    image: ghcr.io/claymod/claymod:latest
+    restart: unless-stopped
+    command:
+      - serve
+      - --config
+      - /etc/claymod/server.yaml
+      # Mandatory: the address agents are told to dial. Compose refuses to
+      # start when it is unset, rather than deploy a server agents cannot
+      # reach.
+      - --wg-endpoint
+      - ${CLAYMOD_WG_ENDPOINT:?set CLAYMOD_WG_ENDPOINT to the public <ip>:<udp-port> agents should dial}
+    ports:
+      - "8443:8443"        # HTTPS enrollment endpoint (agents + operators)
+      - "51821:51821/udp"  # WireGuard overlay
+    volumes:
+      # CA, identities, inventory DB, WireGuard keys and caches. This volume
+      # IS the deployment's trust root — back it up.
+      - claymod-data:/var/lib/claymod
+      # Mount playbooks read-only to apply them from inside the container:
+      # - ./playbooks:/playbooks:ro
+    cap_add:
+      # `serve` creates the WireGuard interface with `ip` and drives peers
+      # through wgctrl.
+      - NET_ADMIN
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=16m
+    healthcheck:
+      test: ["CMD", "curl", "-fsSk", "https://127.0.0.1:8443/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    stop_grace_period: 20s
+
+volumes:
+  claymod-data:

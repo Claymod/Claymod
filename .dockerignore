@@ -1,0 +1,23 @@
+# Build context for the control-server image (see Dockerfile).
+# Everything the build needs (cmd, internal, pkl schema, go.mod/sum,
+# scripts/bootstrap-pkl.sh, docker/server.yaml) stays included.
+
+.git
+.github
+.tidet
+.old_claymod
+
+# Build/test output
+bin
+dist
+demo
+demo-verify
+*.test
+*.out
+coverage.*
+
+# Not needed inside the image
+docs
+examples
+simulation
+README.md

@@ -97,6 +97,26 @@ The control server needs the `pkl` CLI on its PATH
 **agent** binary — a small static build (`CGO_ENABLED=0`) that links no
 database, no PKL tooling and no wgctrl.
 
+### Docker (control server)
+
+The control server is also published as a multi-arch image
+(`linux/amd64`, `linux/arm64` — `ghcr.io/claymod/claymod`) with the
+server + CLI, the `pkl` CLI and the host agent binaries baked in:
+
+```sh
+export CLAYMOD_WG_ENDPOINT=<public-ip>:51821   # the address agents dial
+docker compose -f examples/docker-compose.yaml up -d
+docker compose -f examples/docker-compose.yaml logs -f claymod
+```
+
+It needs `CAP_NET_ADMIN` (it creates the WireGuard interface) and
+publishes TCP 8443 (enrollment) + UDP 51821 (overlay); the CA, inventory
+and WireGuard keys live in the `claymod-data` volume. Operator commands
+run inside the container — `docker compose exec <service> claymod …`
+(`exec` bypasses the entrypoint, so the binary is named explicitly) —
+because the overlay lives in its network namespace. Full guide:
+[docs/docker.md](docs/docker.md).
+
 ### Air-gapped hosts
 
 `claymod serve` can offer agent binaries for download over its pinned
@@ -328,6 +348,7 @@ certificate, missing client certificate, untrusted server).
 | [docs/playbooks.md](docs/playbooks.md) | playbook authoring guide |
 | [docs/enrollment.md](docs/enrollment.md) | enrollment + revocation runbook |
 | [docs/security.md](docs/security.md) | threat model and security notes |
+| [docs/docker.md](docs/docker.md) | control server as a container (compose, volumes, upgrades, troubleshooting) |
 | [simulation/README.md](simulation/README.md) | TLS/enrollment verification |
 
 ## Status

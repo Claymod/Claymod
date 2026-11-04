@@ -8,7 +8,9 @@ claymod, and hosts enroll with the served bootstrap script.
 Alternatives (manual pinned enrollment, air-gapped downloads,
 operator-managed WireGuard) live in
 [docs/enrollment.md](enrollment.md); security trade-offs in
-[docs/security.md](security.md).
+[docs/security.md](security.md). Running the control server as a
+container instead? [docs/docker.md](docker.md) covers the same
+deployment as a Compose service.
 
 You run every command yourself, over SSH, as **root** on both machines
 (WireGuard and systemd need it). The agent executes commands with its
